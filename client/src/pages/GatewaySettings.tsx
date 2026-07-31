@@ -464,6 +464,12 @@ export default function GatewaySettings() {
                         <span>Mercado Pago</span>
                       </div>
                     </SelectItem>
+                    <SelectItem value="ziina">
+                      <div className="flex items-center gap-2">
+                        <CreditCard className="w-4 h-4 text-emerald-700" />
+                        <span>Ziina</span>
+                      </div>
+                    </SelectItem>
                   </SelectContent>
                 </Select>
                 {paymentForm.formState.errors.provider && (
@@ -997,6 +1003,8 @@ export default function GatewaySettings() {
     </div>
   );
 }
+
+
 
 
 
