@@ -34,12 +34,20 @@ export const SocketProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     if (!user?.id) return;
 
+    const configuredTransports = String(import.meta.env.VITE_SOCKET_TRANSPORTS || "polling")
+      .split(",")
+      .map((transport) => transport.trim())
+      .filter(Boolean);
+    const transports = configuredTransports.length > 0 ? configuredTransports : ["polling"];
+    const websocketEnabled = transports.includes("websocket");
+
     const instance = io(window.location.origin, {
       query: {
         userId: user.id,
         role: user.role || "agent",
       },
-      transports: ["polling", "websocket"],
+      transports,
+      upgrade: websocketEnabled,
       reconnectionDelay: 2000,
       reconnectionDelayMax: 10000,
     });
@@ -59,7 +67,7 @@ export const SocketProvider = ({ children }: { children: React.ReactNode }) => {
       instance.disconnect();
       setSocket(null);
     };
-  }, [user?.id]);
+  }, [user?.id, user?.role]);
 
   return (
     <SocketContext.Provider value={{ socket }}>
