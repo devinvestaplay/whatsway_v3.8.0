@@ -1680,6 +1680,30 @@ export const whiteLabelTopupOptions = pgTable("white_label_topup_options", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
 
+export const whiteLabelTopupPayments = pgTable("white_label_topup_payments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  workspaceId: varchar("workspace_id").references(() => channels.id, { onDelete: "set null" }),
+  topupOptionId: varchar("topup_option_id").references(() => whiteLabelTopupOptions.id, { onDelete: "set null" }),
+  provider: varchar("provider", { length: 40 }).notNull().default("stripe"),
+  providerSessionId: varchar("provider_session_id", { length: 255 }),
+  providerPaymentIntentId: varchar("provider_payment_intent_id", { length: 255 }),
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
+  currency: varchar("currency", { length: 10 }).notNull().default("USD"),
+  points: numeric("points", { precision: 14, scale: 2 }).notNull(),
+  label: text("label").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("pending"),
+  checkoutUrl: text("checkout_url"),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+  creditedAt: timestamp("credited_at", { withTimezone: true }),
+  createdBy: varchar("created_by").references((): any => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+}, (table) => ({
+  clientIdx: index("white_label_topup_payments_client_idx").on(table.clientId),
+  providerSessionIdx: uniqueIndex("white_label_topup_payments_provider_session_idx").on(table.provider, table.providerSessionId),
+}));
+
 export const whiteLabelCreditTransactions = pgTable("white_label_credit_transactions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   clientId: varchar("client_id").notNull().references(() => users.id, { onDelete: "cascade" }),

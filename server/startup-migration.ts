@@ -903,6 +903,36 @@ const steps: MigrationStep[] = [
   },
 
   {
+    description: "Create white-label topup payments table (if not exists)",
+    sql: `
+      CREATE TABLE IF NOT EXISTS white_label_topup_payments (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        client_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        workspace_id VARCHAR REFERENCES channels(id) ON DELETE SET NULL,
+        topup_option_id VARCHAR REFERENCES white_label_topup_options(id) ON DELETE SET NULL,
+        provider VARCHAR(40) NOT NULL DEFAULT 'stripe',
+        provider_session_id VARCHAR(255),
+        provider_payment_intent_id VARCHAR(255),
+        amount NUMERIC(10,2) NOT NULL,
+        currency VARCHAR(10) NOT NULL DEFAULT 'USD',
+        points NUMERIC(14,2) NOT NULL,
+        label TEXT NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        checkout_url TEXT,
+        metadata JSONB DEFAULT '{}'::jsonb,
+        credited_at TIMESTAMPTZ,
+        created_by VARCHAR REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS white_label_topup_payments_client_idx ON white_label_topup_payments(client_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS white_label_topup_payments_provider_session_idx
+        ON white_label_topup_payments(provider, provider_session_id)
+        WHERE provider_session_id IS NOT NULL;
+    `,
+  },
+
+  {
     description: "Create white-label credit transactions table (if not exists)",
     sql: `
       CREATE TABLE IF NOT EXISTS white_label_credit_transactions (

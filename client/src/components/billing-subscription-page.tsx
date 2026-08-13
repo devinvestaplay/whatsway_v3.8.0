@@ -15,14 +15,14 @@
  * ============================================================
  */
 
-import { Crown, Calendar, Check, X, ArrowRightLeft, XCircle } from "lucide-react";
+import { Crown, Calendar, Check, X, ArrowRightLeft, XCircle, CreditCard, Loader2, Wallet } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/contexts/auth-context";
 import type { PlanData, PlanFeature, PlanPermissions, SubscriptionResponse } from "@/types/types";
 import { useLocation } from "wouter";
 import { useTranslation } from "@/lib/i18n";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 
@@ -48,6 +48,19 @@ function getCurrencySymbol(currency?: string | null): string {
   return currencySymbolMap[currency.toUpperCase()] || currency + " ";
 }
 
+function formatMoney(amount: string | number, currency?: string | null) {
+  const value = Number(amount || 0);
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: (currency || "USD").toUpperCase(),
+      maximumFractionDigits: value % 1 === 0 ? 0 : 2,
+    }).format(value);
+  } catch {
+    return `${getCurrencySymbol(currency)}${value.toLocaleString()}`;
+  }
+}
+
 export default function BillingSubscriptionPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { t } = useTranslation();
   const { user, currency: userCurrency, currencySymbol: userCurrencySymbol } = useAuth();
@@ -57,6 +70,11 @@ export default function BillingSubscriptionPage({ embedded = false }: { embedded
   const queryClient = useQueryClient();
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [showCancelConfirm, setShowCancelConfirm] = useState<string | null>(null);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
+  const [buyingTopupId, setBuyingTopupId] = useState<string | null>(null);
+  const [verifyingTopup, setVerifyingTopup] = useState(false);
+  const [topupReturnHandled, setTopupReturnHandled] = useState(false);
+  const canUseTopups = !!user?.id && user.role !== "superadmin";
 
   const handleCancelSubscription = async (subscriptionId: string) => {
     setCancellingId(subscriptionId);
@@ -97,6 +115,80 @@ export default function BillingSubscriptionPage({ embedded = false }: { embedded
     enabled: !!user?.id,
   });
 
+  const { data: topupOptionsData } = useQuery<{ rows: any[] }>({
+    queryKey: ["/api/topups/options"],
+    queryFn: () => apiRequest("GET", "/api/topups/options").then((res) => res.json()),
+    enabled: canUseTopups,
+  });
+
+  const { data: creditData } = useQuery<{ balance: number; rows: any[] }>({
+    queryKey: ["/api/topups/balance"],
+    queryFn: () => apiRequest("GET", "/api/topups/balance").then((res) => res.json()),
+    enabled: canUseTopups,
+  });
+
+  const { data: workspaces = [] } = useQuery<any[]>({
+    queryKey: ["/api/channels"],
+    queryFn: () => apiRequest("GET", "/api/channels").then((res) => res.json()),
+    enabled: canUseTopups,
+  });
+
+  useEffect(() => {
+    if (!canUseTopups || topupReturnHandled || typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get("topup_session_id");
+    const paymentId = params.get("topup_payment_id");
+    if (params.get("topup_cancelled")) {
+      setTopupReturnHandled(true);
+      toast({ title: "Topup cancelled", description: "No credits were charged or added." });
+      window.history.replaceState({}, "", window.location.pathname);
+      return;
+    }
+    if (!sessionId || !paymentId) return;
+
+    setTopupReturnHandled(true);
+    setVerifyingTopup(true);
+    apiRequest("POST", "/api/topups/stripe/verify", { sessionId, paymentId })
+      .then((res) => res.json())
+      .then((data) => {
+        toast({
+          title: "Credits added",
+          description: `Your new credit balance is ${Number(data.balance || 0).toLocaleString()}.`,
+        });
+        queryClient.invalidateQueries({ queryKey: ["/api/topups/balance"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/channels"] });
+        window.history.replaceState({}, "", window.location.pathname);
+      })
+      .catch((error: any) => {
+        toast({
+          title: "Topup verification failed",
+          description: error.message || "Please refresh the billing page after Stripe confirms the payment.",
+          variant: "destructive",
+        });
+      })
+      .finally(() => setVerifyingTopup(false));
+  }, [canUseTopups, queryClient, toast, topupReturnHandled]);
+
+  const handleBuyTopup = async (topupOptionId: string) => {
+    setBuyingTopupId(topupOptionId);
+    try {
+      const response = await apiRequest("POST", "/api/topups/stripe/checkout", {
+        topupOptionId,
+        workspaceId: selectedWorkspaceId || null,
+      });
+      const data = await response.json();
+      if (!data.checkoutUrl) throw new Error("Stripe did not return a checkout URL");
+      window.location.href = data.checkoutUrl;
+    } catch (error: any) {
+      toast({
+        title: "Topup checkout failed",
+        description: error.message || "Unable to start Stripe checkout.",
+        variant: "destructive",
+      });
+      setBuyingTopupId(null);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className={embedded ? "flex items-center justify-center p-4" : "flex-1 min-h-screen flex items-center justify-center p-4 bg-white text-gray-700"}>
@@ -121,6 +213,81 @@ export default function BillingSubscriptionPage({ embedded = false }: { embedded
           View and manage your current subscription plans
         </p>
       </div>
+      {canUseTopups && (
+        <section className="p-6 pb-0">
+          <div className="grid gap-4 lg:grid-cols-[minmax(260px,340px)_1fr]">
+            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-gray-500">Credit Balance</p>
+                  <p className="mt-2 text-3xl font-bold text-gray-900">
+                    {Number(creditData?.balance || 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-green-100 p-3">
+                  <Wallet className="h-6 w-6 text-green-700" />
+                </div>
+              </div>
+              {verifyingTopup && (
+                <div className="mt-4 flex items-center gap-2 rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Confirming Stripe payment
+                </div>
+              )}
+              <label className="mt-5 block text-sm font-semibold text-gray-700">
+                Apply credits to workspace
+                <select
+                  className="mt-2 h-11 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-green-600"
+                  value={selectedWorkspaceId}
+                  onChange={(event) => setSelectedWorkspaceId(event.target.value)}
+                >
+                  <option value="">Client balance only</option>
+                  {workspaces.map((workspace) => (
+                    <option key={workspace.id} value={workspace.id}>
+                      {workspace.name || workspace.phoneNumber || workspace.id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Credit Topups</h3>
+                  <p className="text-sm text-gray-500">Buy prepaid credits with Stripe.</p>
+                </div>
+                <CreditCard className="h-5 w-5 text-green-700" />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {(topupOptionsData?.rows || []).map((option) => (
+                  <div key={option.id} className="rounded-lg border border-gray-200 p-4">
+                    <p className="text-sm font-semibold text-gray-500">{option.label}</p>
+                    <p className="mt-2 text-2xl font-bold text-gray-900">
+                      {Number(option.points || 0).toLocaleString()}
+                      <span className="ml-1 text-sm font-medium text-gray-500">credits</span>
+                    </p>
+                    <p className="mt-1 text-sm text-gray-500">{formatMoney(option.amount, option.currency)}</p>
+                    <Button
+                      className="mt-4 w-full bg-green-700 hover:bg-green-800"
+                      disabled={buyingTopupId === option.id || verifyingTopup}
+                      onClick={() => handleBuyTopup(option.id)}
+                    >
+                      {buyingTopupId === option.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CreditCard className="mr-2 h-4 w-4" />}
+                      Buy
+                    </Button>
+                  </div>
+                ))}
+                {(topupOptionsData?.rows || []).length === 0 && (
+                  <div className="col-span-full rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500">
+                    No active topup packages are available yet.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
       <main className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 p-6">
         {isError ||
         !activeplandata?.success ||

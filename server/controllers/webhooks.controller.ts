@@ -39,7 +39,7 @@ import { startAutomationExecutionFunction } from "./automation.controller";
 import { triggerService } from "server/services/automation-execution-service";
 import { WhatsAppApiService } from "server/services/whatsapp-api";
 import { getWhatsAppError } from "@shared/whatsapp-error-codes";
-import { db } from "server/db";
+import { db, pool } from "server/db";
 import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { triggerNotification, triggerThrottledNotification, NOTIFICATION_EVENTS } from "server/services/notification.service";
 import { users } from "@shared/schema";
@@ -2643,6 +2643,8 @@ async function handleRazorpaySubscriptionCompleted(event: any) {
 async function handleStripeCheckoutSessionCompleted(session: any) {
   console.log('Stripe checkout session completed:', session.id);
 
+  if (await handleWhiteLabelStripeTopupCompleted(session)) return;
+
   if (session.mode !== "subscription") return;
   if (session.payment_status && session.payment_status !== "paid") return;
 
@@ -2692,6 +2694,84 @@ async function handleStripeCheckoutSessionCompleted(session: any) {
       gatewayStatus: stripeSub?.status || "active",
     }
   );
+}
+
+async function handleWhiteLabelStripeTopupCompleted(session: any): Promise<boolean> {
+  if (session.metadata?.purpose !== "white_label_credit_topup") return false;
+  if (session.payment_status && session.payment_status !== "paid") return true;
+
+  const topupPaymentId = session.metadata?.topupPaymentId;
+  if (!topupPaymentId) return true;
+
+  const paymentIntentId =
+    typeof session.payment_intent === "string"
+      ? session.payment_intent
+      : session.payment_intent?.id || null;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const paymentResult = await client.query(
+      `SELECT * FROM white_label_topup_payments WHERE id=$1 FOR UPDATE`,
+      [topupPaymentId]
+    );
+    const payment = paymentResult.rows[0];
+    if (!payment) {
+      await client.query("ROLLBACK");
+      return true;
+    }
+    await client.query(
+      `UPDATE white_label_topup_payments
+       SET provider_session_id=COALESCE(provider_session_id,$2),
+           provider_payment_intent_id=COALESCE($3,provider_payment_intent_id),
+           updated_at=NOW()
+       WHERE id=$1`,
+      [topupPaymentId, session.id, paymentIntentId]
+    );
+
+    if (payment.status === "completed" && payment.credited_at) {
+      await client.query("COMMIT");
+      return true;
+    }
+
+    const lastBalance = await client.query(
+      `SELECT balance_after FROM white_label_credit_transactions WHERE client_id=$1 ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [payment.client_id]
+    );
+    const before = Number(lastBalance.rows[0]?.balance_after || 0);
+    const credits = Number(payment.points || 0);
+    const after = before + credits;
+    await client.query(
+      `INSERT INTO white_label_credit_transactions (client_id, workspace_id, transaction_type, credits, balance_before, balance_after, reference, note, created_by)
+       VALUES ($1,$2,'credit',$3,$4,$5,$6,$7,$8)`,
+      [
+        payment.client_id,
+        payment.workspace_id || null,
+        credits,
+        before,
+        after,
+        `topup:stripe:${session.id}`,
+        payment.label,
+        payment.created_by || payment.client_id,
+      ]
+    );
+    if (payment.workspace_id) {
+      await client.query(
+        `UPDATE channels SET white_label_points=COALESCE(white_label_points,0) + $1, updated_at=NOW() WHERE id=$2`,
+        [credits, payment.workspace_id]
+      );
+    }
+    await client.query(
+      `UPDATE white_label_topup_payments SET status='completed', credited_at=NOW(), updated_at=NOW() WHERE id=$1`,
+      [topupPaymentId]
+    );
+    await client.query("COMMIT");
+    return true;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function handleStripePaymentIntentSucceeded(paymentIntent: any) {
