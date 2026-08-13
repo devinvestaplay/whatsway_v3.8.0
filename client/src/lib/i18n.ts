@@ -320,6 +320,10 @@ setLanguage: async (language: string, userSelected?: boolean) => {
     });
   }
 
+  if (typeof value !== "string") {
+    return path;
+  }
+
   return value;
 },
     }),

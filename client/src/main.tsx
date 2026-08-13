@@ -19,22 +19,31 @@ import { createRoot } from "react-dom/client";
 import React from "react";
 import App from "./App";
 import "./index.css";
-if (process.env.NODE_ENV === "production") {
-  console.log = () => {};
-  console.error = () => {};
-  console.warn = () => {};
-}
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
-  { hasError: boolean }
+  { hasError: boolean; error?: Error }
 > {
   constructor(props: { children: React.ReactNode }) {
     super(props);
     this.state = { hasError: false };
   }
-  static getDerivedStateFromError() {
-    return { hasError: true };
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+  componentDidMount() {
+    window.addEventListener("popstate", this.reset);
+  }
+  componentWillUnmount() {
+    window.removeEventListener("popstate", this.reset);
+  }
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("React render error:", error, errorInfo);
+  }
+  reset = () => {
+    if (this.state.hasError) {
+      this.setState({ hasError: false, error: undefined });
+    }
   }
   render() {
     if (this.state.hasError) {
