@@ -54,7 +54,7 @@ interface AuthContextType {
   currency: string; // Direct access to currency
   logout: () => void;
   currencySymbol: string | undefined;
-  userPlans: any[];  
+  userPlans: SubscriptionResponse | null;
   isUserPlansLoading: boolean;
 }
 
@@ -165,7 +165,7 @@ const {
         currency: brandSettings?.currency || "INR",
         currencySymbol: currency?.symbol,
         logout,
-        userPlans: Array.isArray(userPlans) ? userPlans : [],
+        userPlans: userPlans || null,
         isUserPlansLoading,
 
       }}

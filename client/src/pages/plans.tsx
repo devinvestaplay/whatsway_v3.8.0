@@ -86,10 +86,48 @@ export default function Plans() {
   // userPlans from auth context is loosely typed (`any[]`) but at runtime is
   // a SubscriptionResponse once the query resolves, or an empty array before
   // it resolves. Normalize to a typed list of items for safe access.
-  const userPlansResponse = userPlans as SubscriptionResponse | SubscriptionData[] | undefined;
+  const userPlansResponse = userPlans as SubscriptionResponse | SubscriptionData[] | null | undefined;
   const userPlanItems: SubscriptionData[] = Array.isArray(userPlansResponse)
-    ? []
-    : userPlansResponse?.data ?? [];
+    ? userPlansResponse
+    : Array.isArray(userPlansResponse?.data)
+      ? userPlansResponse.data
+      : [];
+
+  const normalizePlanFeatures = (rawFeatures: unknown): Feature[] => {
+    let features = rawFeatures;
+    if (typeof features === "string") {
+      try {
+        features = JSON.parse(features);
+      } catch {
+        features = [];
+      }
+    }
+    if (!Array.isArray(features)) return [];
+    return features.map((feature: any) => {
+      if (typeof feature === "string") return { name: feature, included: true };
+      if (feature && typeof feature === "object") {
+        return {
+          name: typeof feature.name === "string" ? feature.name : "",
+          included: feature.included !== false,
+        };
+      }
+      return { name: "", included: true };
+    }).filter((feature) => feature.name.trim() !== "");
+  };
+
+  const normalizePlanPermissions = (rawPermissions: unknown): PlanPermissions => {
+    let permissions = rawPermissions;
+    if (typeof permissions === "string") {
+      try {
+        permissions = JSON.parse(permissions);
+      } catch {
+        permissions = {};
+      }
+    }
+    return permissions && typeof permissions === "object" && !Array.isArray(permissions)
+      ? (permissions as PlanPermissions)
+      : {};
+  };
 
   const { data: currencyMapData } = useQuery<{
     success: boolean;
@@ -1214,6 +1252,8 @@ export default function Plans() {
                   {plans.map((plan) => {
                     const IconComponent = iconMap[plan.icon] || Zap;
                     const isPopular = plan.popular;
+                    const planFeatures = normalizePlanFeatures(plan.features);
+                    const planPermissions = normalizePlanPermissions(plan.permissions);
 
                     const isActivePlan = userPlanItems.some(
                       (p) =>
@@ -1285,9 +1325,9 @@ export default function Plans() {
                                   : t("plans.card.perMonth")}
                               </span>
                             </div>
-                            {plan.permissions && (
+                            {Object.keys(planPermissions).length > 0 && (
                               <div className="mt-2 space-y-1">
-                                {Object.entries(plan.permissions)
+                                {Object.entries(planPermissions)
                                   .filter(([_, value]) => value && String(value).trim() !== "")
                                   .map(([key, value]) => {
                                     const labelMap: Record<string, string> = {
@@ -1311,8 +1351,9 @@ export default function Plans() {
                             )}
                           </div>
                           <ul className="space-y-2 mb-6 flex-1">
-                            {plan.features &&
-                              plan.features.slice(0, 4).map((feature, idx) => (
+                            {planFeatures
+                              .slice(0, 4)
+                              .map((feature, idx) => (
                                 <li
                                   key={idx}
                                   className="flex items-start gap-2"
