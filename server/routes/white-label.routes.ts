@@ -19,6 +19,57 @@ const settingsDefaults = {
   email_from_name: "Whatsway",
 };
 
+const partnerSettingsDefaults = {
+  clientBilling: {
+    paymentMode: "platform",
+    paymentMethods: "",
+    stripeAutomaticTax: true,
+    requireVatId: false,
+    stripeConsentMessage: "",
+    addonCreditEnabled: true,
+    defaultAddonTopupOption: "",
+    pricingPageNote:
+      "Thank you for choosing WABA (WhatsApp Business Cloud API). We appreciate your business, and we'll do our best to continue to give you the kind of service you deserve.\n\nNOTE: WhatsApp Credit, Bot Credit & Points are not transferable and not even refundable.",
+  },
+  signupTrial: {
+    freeTrialDays: 14,
+    freeTrialOption: "new_workspaces",
+    userRegistrationEnabled: true,
+    phoneRequired: true,
+    emailVerificationEnabled: false,
+  },
+  defaults: {
+    language: "English",
+    flowTheme: "Default",
+    timezone: "(UTC+04:00) Abu Dhabi",
+    countryCode: "+971 AE",
+  },
+  sharedServices: {
+    systemEmailProfile: "",
+    s3StorageEnabled: false,
+    webChatSupportEnabled: true,
+    openaiEnabled: true,
+    xaiEnabled: false,
+    groqEnabled: false,
+  },
+  apiRedirects: {
+    privateKey: "",
+    webhookUrl: "",
+    loginRedirectUrl: "",
+  },
+  loginPage: {
+    layout: "banana",
+    backgroundMain: "#ffffff",
+    backgroundForm: "#ffffff",
+    textMain: "#111827",
+    textLight: "#64748b",
+    buttonBackground: "#16821f",
+    buttonText: "#ffffff",
+    linkColor: "#111827",
+    backgroundImage: "",
+  },
+};
+
 const settingsSchema = z.object({
   platformName: z.string().min(1).max(120),
   brandTagline: z.string().max(240).optional().nullable(),
@@ -38,6 +89,56 @@ const settingsSchema = z.object({
   hidePoweredBy: z.boolean().optional(),
   allowPartnerSignup: z.boolean().optional(),
   maintenanceMode: z.boolean().optional(),
+});
+
+const partnerSettingsSchema = z.object({
+  clientBilling: z.object({
+    paymentMode: z.enum(["own_site", "platform"]).default("platform"),
+    paymentMethods: z.string().max(240).optional().nullable(),
+    stripeAutomaticTax: z.boolean().default(true),
+    requireVatId: z.boolean().default(false),
+    stripeConsentMessage: z.string().max(1000).optional().nullable(),
+    addonCreditEnabled: z.boolean().default(true),
+    defaultAddonTopupOption: z.string().max(160).optional().nullable(),
+    pricingPageNote: z.string().max(2000).optional().nullable(),
+  }),
+  signupTrial: z.object({
+    freeTrialDays: z.coerce.number().int().min(0).max(365).default(14),
+    freeTrialOption: z.enum(["new_workspaces", "new_clients", "none"]).default("new_workspaces"),
+    userRegistrationEnabled: z.boolean().default(true),
+    phoneRequired: z.boolean().default(true),
+    emailVerificationEnabled: z.boolean().default(false),
+  }),
+  defaults: z.object({
+    language: z.string().max(80).default("English"),
+    flowTheme: z.string().max(80).default("Default"),
+    timezone: z.string().max(120).default("(UTC+04:00) Abu Dhabi"),
+    countryCode: z.string().max(40).default("+971 AE"),
+  }),
+  sharedServices: z.object({
+    systemEmailProfile: z.string().max(200).optional().nullable(),
+    s3StorageEnabled: z.boolean().default(false),
+    webChatSupportEnabled: z.boolean().default(true),
+    openaiEnabled: z.boolean().default(true),
+    xaiEnabled: z.boolean().default(false),
+    groqEnabled: z.boolean().default(false),
+  }),
+  apiRedirects: z.object({
+    privateKey: z.string().max(500).optional().nullable(),
+    webhookUrl: z.string().max(500).optional().nullable(),
+    loginRedirectUrl: z.string().max(500).optional().nullable(),
+  }),
+  loginPage: z.object({
+    layout: z.enum(["default", "apple", "banana", "cherry"]).default("banana"),
+    backgroundMain: z.string().max(20).default("#ffffff"),
+    backgroundForm: z.string().max(20).default("#ffffff"),
+    textMain: z.string().max(20).default("#111827"),
+    textLight: z.string().max(20).default("#64748b"),
+    buttonBackground: z.string().max(20).default("#16821f"),
+    buttonText: z.string().max(20).default("#ffffff"),
+    linkColor: z.string().max(20).default("#111827"),
+    backgroundImage: z.string().max(1000).optional().nullable(),
+  }),
 });
 
 const partnerSchema = z.object({
@@ -60,6 +161,67 @@ const creditSchema = z.object({
   reference: z.string().max(160).optional().nullable(),
   note: z.string().max(500).optional().nullable(),
 });
+
+const planConfigSchema = z.object({
+  planKey: z.string().min(1).max(80).optional(),
+  planName: z.string().min(1).max(160),
+  status: z.enum(["active", "archived", "inactive"]).default("active"),
+  displayPrice: z.coerce.number().min(0).default(0),
+  costPrice: z.coerce.number().min(0).default(0),
+  billingCycle: z.enum(["monthly", "annual"]).default("monthly"),
+  badge: z.string().max(80).optional().nullable(),
+  description: z.string().max(1000).optional().nullable(),
+  hideUsageCounts: z.boolean().default(false),
+  enabledFeatures: z.array(z.string()).default([]),
+  disabledFeatures: z.array(z.string()).default([]),
+  gatewayMetadata: z.record(z.string(), z.unknown()).default({}),
+});
+
+const addonCatalogSchema = z.object({
+  addonKey: z.string().min(1).max(80),
+  addonName: z.string().min(1).max(160),
+  description: z.string().max(500).optional().nullable(),
+  costPrice: z.coerce.number().min(0).default(0),
+  points: z.coerce.number().min(0).default(0),
+  label: z.string().max(240).optional().nullable(),
+  status: z.enum(["active", "inactive"]).default("active"),
+  displayOrder: z.coerce.number().int().default(0),
+});
+
+const topupOptionSchema = z.object({
+  displayOrder: z.coerce.number().int().default(0),
+  currency: z.string().min(1).max(10).default("USD"),
+  amount: z.coerce.number().min(0),
+  points: z.coerce.number().min(0),
+  label: z.string().min(1).max(160),
+  status: z.enum(["active", "inactive"]).default("active"),
+});
+
+const whatsappFeatureCatalog = [
+  { key: "whatsapp_cloud", label: "WhatsApp Cloud", group: "Channel" },
+  { key: "live_chat", label: "Live Chat", group: "Inbox" },
+  { key: "team_inbox", label: "Team Inbox", group: "Inbox" },
+  { key: "contacts", label: "Contacts", group: "CRM" },
+  { key: "groups", label: "Groups", group: "CRM" },
+  { key: "campaigns", label: "Campaigns", group: "Marketing" },
+  { key: "templates", label: "Templates", group: "Marketing" },
+  { key: "automations", label: "Automations", group: "Automation" },
+  { key: "chatbot_flow", label: "Chatbot Flow", group: "Automation" },
+  { key: "ai_assistant", label: "AI Assistant", group: "AI" },
+  { key: "ai_calling", label: "AI Calling", group: "AI" },
+  { key: "analytics", label: "Analytics", group: "Reporting" },
+  { key: "message_logs", label: "Message Logs", group: "Reporting" },
+  { key: "api_keys", label: "API Keys", group: "Developer" },
+  { key: "webhooks", label: "Webhooks", group: "Developer" },
+  { key: "google_sheets", label: "Google Sheets", group: "Integrations" },
+  { key: "email_marketing", label: "Email Marketing", group: "Marketing" },
+  { key: "multi_workspace", label: "Multi Workspace", group: "Workspace" },
+  { key: "team_members", label: "Team Members", group: "Workspace" },
+  { key: "broadcast_scheduling", label: "Broadcast Scheduling", group: "Marketing" },
+  { key: "template_sync", label: "Template Sync", group: "Marketing" },
+  { key: "conversation_assignment", label: "Conversation Assignment", group: "Inbox" },
+  { key: "labels_tags", label: "Labels / Tags", group: "CRM" },
+];
 
 function actorId(req: Request) {
   return req.user?.id ?? null;
@@ -145,7 +307,7 @@ function buildWorkspaceWhere(req: Request, params: any[]) {
 
   if (search) {
     params.push(`%${search}%`);
-    clauses.push(`(c.id ILIKE $${params.length} OR c.name ILIKE $${params.length} OR c.phone_number ILIKE $${params.length} OR u.email ILIKE $${params.length} OR u.username ILIKE $${params.length})`);
+    clauses.push(`(c.id ILIKE $${params.length} OR c.name ILIKE $${params.length} OR c.phone_number ILIKE $${params.length} OR u.email ILIKE $${params.length} OR u.username ILIKE $${params.length} OR u.public_client_id::text ILIKE $${params.length})`);
   }
   if (ownerId) {
     params.push(ownerId);
@@ -213,6 +375,31 @@ export function registerWhiteLabelRoutes(app: Express) {
     res.json(toSettings(updated.rows[0]));
   });
 
+  app.get(`${BASE}/partner-settings`, ...guard, async (_req, res) => {
+    const row = await ensureSettings();
+    const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata : {};
+    res.json({
+      ...partnerSettingsDefaults,
+      ...((metadata as any).partnerSettings || {}),
+    });
+  });
+
+  app.put(`${BASE}/partner-settings`, ...guard, async (req, res) => {
+    const parsed = partnerSettingsSchema.parse(req.body);
+    const before = await ensureSettings();
+    const metadata = before.metadata && typeof before.metadata === "object" ? before.metadata : {};
+    const nextMetadata = {
+      ...metadata,
+      partnerSettings: parsed,
+    };
+    const updated = await pool.query(
+      `UPDATE white_label_settings SET metadata=$1, updated_by=$2, updated_at=NOW() WHERE singleton_key='default' RETURNING *`,
+      [JSON.stringify(nextMetadata), actorId(req)]
+    );
+    await audit(req, "partner_settings.update", "white_label_settings", updated.rows[0].id, (metadata as any).partnerSettings || null, parsed);
+    res.json(parsed);
+  });
+
   app.get(`${BASE}/summary`, ...guard, async (_req, res) => {
     const { rows } = await pool.query(`
       SELECT
@@ -233,7 +420,7 @@ export function registerWhiteLabelRoutes(app: Express) {
     const params: any[] = [];
     if (search) {
       params.push(`%${search}%`);
-      clauses.push(`(u.id ILIKE $${params.length} OR u.email ILIKE $${params.length} OR u.username ILIKE $${params.length} OR concat_ws(' ', u.first_name, u.last_name) ILIKE $${params.length})`);
+      clauses.push(`(u.id ILIKE $${params.length} OR u.public_client_id::text ILIKE $${params.length} OR u.email ILIKE $${params.length} OR u.username ILIKE $${params.length} OR concat_ws(' ', u.first_name, u.last_name) ILIKE $${params.length})`);
     }
     if (status) {
       params.push(status);
@@ -243,7 +430,7 @@ export function registerWhiteLabelRoutes(app: Express) {
     const total = await pool.query(`SELECT COUNT(*)::int AS count FROM users u WHERE ${where}`, params);
     params.push(limit, offset);
     const data = await pool.query(`
-      SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.status, u.created_at, u.last_login,
+      SELECT u.id, u.public_client_id, u.username, u.email, u.first_name, u.last_name, u.status, u.created_at, u.updated_at, u.last_login,
         COUNT(DISTINCT c.id)::int AS workspaces,
         COUNT(DISTINCT c.id)::int AS bots,
         COUNT(DISTINCT ct.id)::int AS bot_users,
@@ -319,7 +506,7 @@ export function registerWhiteLabelRoutes(app: Express) {
 
   app.get(`${BASE}/clients/export`, ...guard, async (_req, res) => {
     const result = await pool.query(`
-      SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.status, u.created_at,
+      SELECT u.id, u.public_client_id, u.username, u.email, u.first_name, u.last_name, u.status, u.created_at, u.updated_at,
         COUNT(DISTINCT c.id)::int AS workspaces,
         COUNT(DISTINCT ct.id)::int AS bot_users,
         COUNT(DISTINCT tm.id)::int AS members
@@ -331,9 +518,9 @@ export function registerWhiteLabelRoutes(app: Express) {
       GROUP BY u.id
       ORDER BY u.created_at DESC LIMIT 5000`);
     await sendWorkbook(res, "white-label-clients.xlsx", "Clients", [
-      { header: "ID", key: "id", width: 38 }, { header: "Username", key: "username", width: 24 }, { header: "Email", key: "email", width: 32 },
+      { header: "Client ID", key: "public_client_id", width: 12 }, { header: "Internal ID", key: "id", width: 38 }, { header: "Username", key: "username", width: 24 }, { header: "Email", key: "email", width: 32 },
       { header: "First Name", key: "first_name", width: 18 }, { header: "Last Name", key: "last_name", width: 18 }, { header: "Status", key: "status", width: 14 },
-      { header: "Workspaces", key: "workspaces", width: 12 }, { header: "Bot Users", key: "bot_users", width: 12 }, { header: "Members", key: "members", width: 12 }, { header: "Created", key: "created_at", width: 24 },
+      { header: "Workspaces", key: "workspaces", width: 12 }, { header: "Bot Users", key: "bot_users", width: 12 }, { header: "Members", key: "members", width: 12 }, { header: "Created", key: "created_at", width: 24 }, { header: "Updated", key: "updated_at", width: 24 },
     ], result.rows);
   });
 
@@ -482,6 +669,150 @@ export function registerWhiteLabelRoutes(app: Express) {
     } finally {
       db.release();
     }
+  });
+
+  app.get(`${BASE}/billing/features`, ...guard, async (_req, res) => {
+    res.json({ rows: whatsappFeatureCatalog });
+  });
+
+  app.get(`${BASE}/billing/plans`, ...guard, async (_req, res) => {
+    const result = await pool.query(`
+      SELECT *
+      FROM white_label_plan_configs
+      ORDER BY
+        CASE plan_key
+          WHEN 'waba_demo' THEN 1
+          WHEN 'activated' THEN 2
+          WHEN 'waba_business' THEN 3
+          WHEN 'waba_individual' THEN 4
+          ELSE 99
+        END,
+        created_at ASC
+    `);
+    res.json({ rows: result.rows });
+  });
+
+  app.post(`${BASE}/billing/plans`, ...guard, async (req, res) => {
+    const parsed = planConfigSchema.parse(req.body);
+    const planKey = parsed.planKey || parsed.planName.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+    const inserted = await pool.query(
+      `INSERT INTO white_label_plan_configs (plan_key, plan_name, status, display_price, cost_price, billing_cycle, badge, description, hide_usage_counts, enabled_features, disabled_features, gateway_metadata, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       ON CONFLICT (plan_key) DO UPDATE SET
+         plan_name=EXCLUDED.plan_name,
+         status=EXCLUDED.status,
+         display_price=EXCLUDED.display_price,
+         cost_price=EXCLUDED.cost_price,
+         billing_cycle=EXCLUDED.billing_cycle,
+         badge=EXCLUDED.badge,
+         description=EXCLUDED.description,
+         hide_usage_counts=EXCLUDED.hide_usage_counts,
+         enabled_features=EXCLUDED.enabled_features,
+         disabled_features=EXCLUDED.disabled_features,
+         gateway_metadata=EXCLUDED.gateway_metadata,
+         updated_at=NOW()
+       RETURNING *`,
+      [planKey, parsed.planName, parsed.status, parsed.displayPrice, parsed.costPrice, parsed.billingCycle, parsed.badge || null, parsed.description || null, parsed.hideUsageCounts, JSON.stringify(parsed.enabledFeatures), JSON.stringify(parsed.disabledFeatures), JSON.stringify(parsed.gatewayMetadata), actorId(req)]
+    );
+    await audit(req, "billing.plan.upsert", "white_label_plan_config", inserted.rows[0].id, null, inserted.rows[0]);
+    res.status(201).json(inserted.rows[0]);
+  });
+
+  app.patch(`${BASE}/billing/plans/:id`, ...guard, async (req, res) => {
+    const parsed = planConfigSchema.partial().parse(req.body);
+    const before = await pool.query(`SELECT * FROM white_label_plan_configs WHERE id=$1`, [req.params.id]);
+    if (!before.rows[0]) return res.status(404).json({ error: "Plan config not found" });
+    const current = before.rows[0];
+    const updated = await pool.query(
+      `UPDATE white_label_plan_configs SET
+        plan_name=$2,
+        status=$3,
+        display_price=$4,
+        cost_price=$5,
+        billing_cycle=$6,
+        badge=$7,
+        description=$8,
+        hide_usage_counts=$9,
+        enabled_features=$10,
+        disabled_features=$11,
+        gateway_metadata=$12,
+        updated_at=NOW()
+       WHERE id=$1 RETURNING *`,
+      [
+        req.params.id,
+        parsed.planName ?? current.plan_name,
+        parsed.status ?? current.status,
+        parsed.displayPrice ?? current.display_price,
+        parsed.costPrice ?? current.cost_price,
+        parsed.billingCycle ?? current.billing_cycle,
+        parsed.badge ?? current.badge,
+        parsed.description ?? current.description,
+        parsed.hideUsageCounts ?? current.hide_usage_counts,
+        JSON.stringify(parsed.enabledFeatures ?? current.enabled_features ?? []),
+        JSON.stringify(parsed.disabledFeatures ?? current.disabled_features ?? []),
+        JSON.stringify(parsed.gatewayMetadata ?? current.gateway_metadata ?? {}),
+      ]
+    );
+    await audit(req, "billing.plan.update", "white_label_plan_config", req.params.id, before.rows[0], updated.rows[0]);
+    res.json(updated.rows[0]);
+  });
+
+  app.get(`${BASE}/billing/addons`, ...guard, async (_req, res) => {
+    const result = await pool.query(`SELECT * FROM white_label_addon_catalog ORDER BY display_order ASC, addon_name ASC`);
+    res.json({ rows: result.rows });
+  });
+
+  app.post(`${BASE}/billing/addons`, ...guard, async (req, res) => {
+    const parsed = addonCatalogSchema.parse(req.body);
+    const inserted = await pool.query(
+      `INSERT INTO white_label_addon_catalog (addon_key, addon_name, description, cost_price, points, label, status, display_order, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (addon_key) DO UPDATE SET addon_name=EXCLUDED.addon_name, description=EXCLUDED.description, cost_price=EXCLUDED.cost_price, points=EXCLUDED.points, label=EXCLUDED.label, status=EXCLUDED.status, display_order=EXCLUDED.display_order, updated_at=NOW()
+       RETURNING *`,
+      [parsed.addonKey, parsed.addonName, parsed.description || null, parsed.costPrice, parsed.points, parsed.label || null, parsed.status, parsed.displayOrder, actorId(req)]
+    );
+    await audit(req, "billing.addon.upsert", "white_label_addon_catalog", inserted.rows[0].id, null, inserted.rows[0]);
+    res.status(201).json(inserted.rows[0]);
+  });
+
+  app.patch(`${BASE}/billing/addons/:id`, ...guard, async (req, res) => {
+    const parsed = addonCatalogSchema.partial().parse(req.body);
+    const before = await pool.query(`SELECT * FROM white_label_addon_catalog WHERE id=$1`, [req.params.id]);
+    if (!before.rows[0]) return res.status(404).json({ error: "Addon not found" });
+    const updated = await pool.query(
+      `UPDATE white_label_addon_catalog SET addon_key=COALESCE($2,addon_key), addon_name=COALESCE($3,addon_name), description=COALESCE($4,description), cost_price=COALESCE($5,cost_price), points=COALESCE($6,points), label=COALESCE($7,label), status=COALESCE($8,status), display_order=COALESCE($9,display_order), updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [req.params.id, parsed.addonKey, parsed.addonName, parsed.description, parsed.costPrice, parsed.points, parsed.label, parsed.status, parsed.displayOrder]
+    );
+    await audit(req, "billing.addon.update", "white_label_addon_catalog", req.params.id, before.rows[0], updated.rows[0]);
+    res.json(updated.rows[0]);
+  });
+
+  app.get(`${BASE}/billing/topups`, ...guard, async (_req, res) => {
+    const result = await pool.query(`SELECT * FROM white_label_topup_options ORDER BY display_order ASC, amount ASC`);
+    res.json({ rows: result.rows });
+  });
+
+  app.post(`${BASE}/billing/topups`, ...guard, async (req, res) => {
+    const parsed = topupOptionSchema.parse(req.body);
+    const inserted = await pool.query(
+      `INSERT INTO white_label_topup_options (display_order, currency, amount, points, label, status, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [parsed.displayOrder, parsed.currency, parsed.amount, parsed.points, parsed.label, parsed.status, actorId(req)]
+    );
+    await audit(req, "billing.topup.create", "white_label_topup_option", inserted.rows[0].id, null, inserted.rows[0]);
+    res.status(201).json(inserted.rows[0]);
+  });
+
+  app.patch(`${BASE}/billing/topups/:id`, ...guard, async (req, res) => {
+    const parsed = topupOptionSchema.partial().parse(req.body);
+    const before = await pool.query(`SELECT * FROM white_label_topup_options WHERE id=$1`, [req.params.id]);
+    if (!before.rows[0]) return res.status(404).json({ error: "Topup option not found" });
+    const updated = await pool.query(
+      `UPDATE white_label_topup_options SET display_order=COALESCE($2,display_order), currency=COALESCE($3,currency), amount=COALESCE($4,amount), points=COALESCE($5,points), label=COALESCE($6,label), status=COALESCE($7,status), updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [req.params.id, parsed.displayOrder, parsed.currency, parsed.amount, parsed.points, parsed.label, parsed.status]
+    );
+    await audit(req, "billing.topup.update", "white_label_topup_option", req.params.id, before.rows[0], updated.rows[0]);
+    res.json(updated.rows[0]);
   });
 
   app.get(`${BASE}/partners`, ...guard, async (_req, res) => {

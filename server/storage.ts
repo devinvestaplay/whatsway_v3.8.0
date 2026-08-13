@@ -428,6 +428,16 @@ export class MemStorage implements IStorage {
       healthDetails: null,         // ✅ added
       createdAt: today,
       updatedAt: today,
+      createdBy: "",
+      appId: null,
+      isCoexistence: false,
+      connectionMethod: "manual",
+      whiteLabelClientId: null,
+      whiteLabelWorkspaceType: "free",
+      whiteLabelPoints: "0",
+      whiteLabelAutoRenew: false,
+      whiteLabelEndDate: null,
+      whiteLabelNotes: null,
     };
     this.channels.set(defaultChannel.id, defaultChannel);
 
@@ -552,6 +562,7 @@ export class MemStorage implements IStorage {
       firstName: insertUser.firstName || null,
       lastName: insertUser.lastName || null,
       avatar: insertUser.avatar || null,
+      publicClientId: insertUser.publicClientId || null,
       role: insertUser.role || "agent",
       status: insertUser.status || "active",
       lastLogin: null,
@@ -764,10 +775,20 @@ export class MemStorage implements IStorage {
       updatedAt: new Date(),
       whatsappBusinessAccountId: insertChannel.whatsappBusinessAccountId || null,
       phoneNumber: insertChannel.phoneNumber || null,
+      createdBy: insertChannel.createdBy || null,
+      appId: insertChannel.appId || null,
       isActive: insertChannel.isActive ?? false,
+      isCoexistence: insertChannel.isCoexistence || false,
       healthStatus: insertChannel.healthStatus || "unknown",
       lastHealthCheck: null,
       healthDetails: null,
+      connectionMethod: insertChannel.connectionMethod || "embedded",
+      whiteLabelClientId: insertChannel.whiteLabelClientId || null,
+      whiteLabelWorkspaceType: insertChannel.whiteLabelWorkspaceType || "free",
+      whiteLabelPoints: insertChannel.whiteLabelPoints || "0",
+      whiteLabelAutoRenew: insertChannel.whiteLabelAutoRenew || false,
+      whiteLabelEndDate: insertChannel.whiteLabelEndDate || null,
+      whiteLabelNotes: insertChannel.whiteLabelNotes || null,
     };
     this.channels.set(id, channel);
     return channel;

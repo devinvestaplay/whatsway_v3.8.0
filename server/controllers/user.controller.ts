@@ -26,6 +26,8 @@ import { otpVerifications } from "@shared/schema";
 import { sendOTPEmailVerify } from "../services/email.service";
 import { resolveUserPermissions } from "server/utils/role-permissions";
 import { z } from "zod";
+import { ensureDefaultWorkspaceForClient } from "../services/workspace.service";
+import { allocatePublicClientId, shouldAssignPublicClientId } from "../services/client-id.service";
 
 // Validation schema for user self/admin updates. Applied before pickAllowed so
 // that malformed values (wrong types, bad email, over-long strings) are
@@ -438,6 +440,10 @@ export const createUser = async (req: Request, res: Response) => {
 
     // 3️⃣ Create new user
     const hashedPassword = await bcrypt.hash(password, 10);
+    const assignedRole = role || "admin";
+    const publicClientId = shouldAssignPublicClientId(assignedRole)
+      ? await allocatePublicClientId()
+      : null;
 
     const newUser = await db
       .insert(users)
@@ -447,7 +453,8 @@ export const createUser = async (req: Request, res: Response) => {
         email,
         firstName,
         lastName,
-        role: role || "admin",
+        role: assignedRole,
+        publicClientId,
         avatar,
         permissions: defaultPermissions,
         isEmailVerified: false,
@@ -456,6 +463,12 @@ export const createUser = async (req: Request, res: Response) => {
       .returning();
 
     const user = newUser[0];
+
+    try {
+      await ensureDefaultWorkspaceForClient(user);
+    } catch (workspaceError) {
+      console.error("[createUser] Failed to create default workspace:", workspaceError);
+    }
 
     // Generate OTP
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
@@ -625,6 +638,7 @@ export const createUserOld = async (req: Request, res: Response) => {
         firstName,
         lastName,
         role: role || "admin",
+        publicClientId: shouldAssignPublicClientId(role || "admin") ? await allocatePublicClientId() : null,
         avatar,
         permissions: defaultPermissions,
       })
@@ -879,6 +893,8 @@ export const createUserSuperadmin = async (req: Request, res: Response) => {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    const publicClientId = await allocatePublicClientId();
+
     // Create user
     const newUser = await db
       .insert(users)
@@ -889,12 +905,19 @@ export const createUserSuperadmin = async (req: Request, res: Response) => {
         firstName,
         lastName,
         role: "admin",
+        publicClientId,
         permissions: defaultPermissions,
         isEmailVerified: true,
       })
       .returning();
 
     const user = newUser[0];
+
+    try {
+      await ensureDefaultWorkspaceForClient(user);
+    } catch (workspaceError) {
+      console.error("[createUserSuperadmin] Failed to create default workspace:", workspaceError);
+    }
 
 
     return res.status(201).json({

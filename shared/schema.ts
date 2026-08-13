@@ -58,6 +58,7 @@ export const users = pgTable(
     role: text("role").notNull().default("admin"), // superadmin, admin, team, manager, agent
     avatar: text("avatar"),
     status: text("status").notNull().default("active"), // active, inactive, banned
+    publicClientId: integer("public_client_id"),
     permissions: text("permissions").array().notNull(),
     channelId: varchar("channel_id").references((): any => channels.id, {
       onDelete: "set null",
@@ -79,6 +80,7 @@ export const users = pgTable(
   (table) => ({
     usersCreatedByIdx: index("users_created_by_idx").on(table.createdBy),
     usersRoleIdx: index("users_role_idx").on(table.role),
+    usersPublicClientIdIdx: uniqueIndex("users_public_client_id_idx").on(table.publicClientId),
   })
 );
 
@@ -740,6 +742,14 @@ export const channels = pgTable("channels", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
   createdBy: varchar("created_by").default(""),
+  whiteLabelClientId: varchar("white_label_client_id").references((): any => users.id, {
+    onDelete: "set null",
+  }),
+  whiteLabelWorkspaceType: varchar("white_label_workspace_type", { length: 20 }).default("free"),
+  whiteLabelPoints: numeric("white_label_points", { precision: 14, scale: 2 }).default("0"),
+  whiteLabelAutoRenew: boolean("white_label_auto_renew").default(false),
+  whiteLabelEndDate: timestamp("white_label_end_date", { withTimezone: true }),
+  whiteLabelNotes: text("white_label_notes"),
 });
 
 export const templates = pgTable("templates", {
@@ -1615,6 +1625,55 @@ export const whiteLabelWorkspaceAddons = pgTable("white_label_workspace_addons",
   price: numeric("price", { precision: 10, scale: 2 }).default("0"),
   startsAt: timestamp("starts_at", { withTimezone: true }).defaultNow(),
   endsAt: timestamp("ends_at", { withTimezone: true }),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+  createdBy: varchar("created_by").references((): any => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+});
+
+export const whiteLabelPlanConfigs = pgTable("white_label_plan_configs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  planKey: varchar("plan_key", { length: 80 }).notNull().unique(),
+  planName: text("plan_name").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("active"),
+  displayPrice: numeric("display_price", { precision: 10, scale: 2 }).default("0"),
+  costPrice: numeric("cost_price", { precision: 10, scale: 2 }).default("0"),
+  billingCycle: varchar("billing_cycle", { length: 20 }).default("monthly"),
+  badge: varchar("badge", { length: 80 }),
+  description: text("description"),
+  hideUsageCounts: boolean("hide_usage_counts").default(false),
+  enabledFeatures: jsonb("enabled_features").$type<string[]>().default([]),
+  disabledFeatures: jsonb("disabled_features").$type<string[]>().default([]),
+  gatewayMetadata: jsonb("gateway_metadata").$type<Record<string, unknown>>().default({}),
+  createdBy: varchar("created_by").references((): any => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+});
+
+export const whiteLabelAddonCatalog = pgTable("white_label_addon_catalog", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  addonKey: varchar("addon_key", { length: 80 }).notNull().unique(),
+  addonName: text("addon_name").notNull(),
+  description: text("description"),
+  costPrice: numeric("cost_price", { precision: 10, scale: 2 }).default("0"),
+  points: numeric("points", { precision: 10, scale: 2 }).default("0"),
+  label: text("label"),
+  status: varchar("status", { length: 20 }).notNull().default("active"),
+  displayOrder: integer("display_order").default(0),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+  createdBy: varchar("created_by").references((): any => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+});
+
+export const whiteLabelTopupOptions = pgTable("white_label_topup_options", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  displayOrder: integer("display_order").default(0),
+  currency: varchar("currency", { length: 10 }).notNull().default("USD"),
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull().default("0"),
+  points: numeric("points", { precision: 14, scale: 2 }).notNull().default("0"),
+  label: text("label").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("active"),
   metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
   createdBy: varchar("created_by").references((): any => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),

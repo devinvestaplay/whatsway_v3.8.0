@@ -108,6 +108,19 @@ export async function apiRequest(
   return res;
 }
 
+export async function readApiJson<T = unknown>(
+  res: Response,
+  fallbackMessage = "API returned a non-JSON response"
+): Promise<T> {
+  const contentType = res.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    const status = res.status ? ` (${res.status})` : "";
+    throw new Error(`${fallbackMessage}${status}. Restart the server so the latest API routes are loaded.`);
+  }
+
+  return res.json() as Promise<T>;
+}
+
 /**
  * Streaming variant of apiRequest. Like apiRequest, attaches CSRF on
  * mutating methods and includes credentials, but does NOT consume the

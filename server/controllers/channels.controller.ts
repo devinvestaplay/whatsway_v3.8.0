@@ -27,6 +27,12 @@ import { eq, ne, desc, like, or, and, sql, count } from 'drizzle-orm';
 import { getOAuthError } from '@shared/whatsapp-error-codes';
 import { MESSAGING_TIER_LIMITS } from '../utils/messaging-tiers';
 import { WhatsAppApiService } from 'server/services/whatsapp-api';
+import {
+  createWorkspaceForClient,
+  getClientById,
+  getWorkspaceOwnerId,
+  isWorkspaceShell,
+} from '../services/workspace.service';
 
 
 
@@ -157,12 +163,102 @@ export const getActiveChannel = asyncHandler(async (req: Request, res: Response)
   }
 
   // ✅ Messaging limit fetch karo Meta se
+  if (isWorkspaceShell(channel)) {
+    return res.json({
+      ...channel,
+      messagingLimitInfo: null,
+    });
+  }
+
   const messagingLimitInfo = await WhatsAppApiService.fetchMessagingLimit(channel);
 
   res.json({
     ...channel,
     messagingLimitInfo,   // { tier, dailyLimit, label }
   });
+});
+
+export const createWorkspace = asyncHandler(async (req: Request, res: Response) => {
+  const user = req.user || (req.session as any)?.user;
+  if (!user) return res.status(401).json({ error: "Not authenticated" });
+
+  if (user.role === "team") {
+    return res.status(403).json({ error: "Team members cannot create workspaces" });
+  }
+
+  const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+  if (!name) return res.status(400).json({ error: "Workspace name is required" });
+  if (name.length > 160) return res.status(400).json({ error: "Workspace name is too long" });
+
+  const requestedClientId = typeof req.body?.clientId === "string" ? req.body.clientId.trim() : "";
+  const clientId = user.role === "superadmin" ? requestedClientId : user.id;
+  if (!clientId) return res.status(400).json({ error: "Client is required" });
+
+  if (user.role !== "superadmin" && clientId !== user.id) {
+    return res.status(403).json({ error: "Access denied" });
+  }
+
+  const client = await getClientById(clientId);
+  if (!client) return res.status(404).json({ error: "Client not found" });
+
+  const workspace = await createWorkspaceForClient({
+    clientId,
+    name,
+    createdBy: user.id,
+    workspaceType: typeof req.body?.workspaceType === "string" ? req.body.workspaceType : "free",
+    notes: typeof req.body?.notes === "string" ? req.body.notes : null,
+    setActive: req.body?.setActive !== false,
+  });
+
+  res.status(201).json(workspace);
+});
+
+export const updateWorkspace = asyncHandler(async (req: Request, res: Response) => {
+  const user = req.user || (req.session as any)?.user;
+  if (!user) return res.status(401).json({ error: "Not authenticated" });
+
+  const { id } = req.params;
+  const channel = await storage.getChannel(id);
+  if (!channel) throw new AppError(404, "Workspace not found");
+
+  const ownerId = await getWorkspaceOwnerId(id);
+  if (user.role !== "superadmin" && ownerId !== user.id) {
+    return res.status(403).json({ error: "Access denied" });
+  }
+
+  const payload: Record<string, unknown> = {};
+  if (typeof req.body?.name === "string") {
+    const name = req.body.name.trim();
+    if (!name) return res.status(400).json({ error: "Workspace name is required" });
+    if (name.length > 160) return res.status(400).json({ error: "Workspace name is too long" });
+    payload.name = name;
+  }
+  if (typeof req.body?.isActive === "boolean") payload.isActive = req.body.isActive;
+  if (typeof req.body?.notes === "string") payload.whiteLabelNotes = req.body.notes;
+
+  if (user.role === "superadmin") {
+    if (typeof req.body?.workspaceType === "string") payload.whiteLabelWorkspaceType = req.body.workspaceType;
+    if (typeof req.body?.autoRenew === "boolean") payload.whiteLabelAutoRenew = req.body.autoRenew;
+    if (typeof req.body?.endDate === "string") {
+      payload.whiteLabelEndDate = req.body.endDate ? new Date(req.body.endDate) : null;
+    }
+  }
+
+  if (Object.keys(payload).length === 0) {
+    return res.status(400).json({ error: "No valid fields to update" });
+  }
+
+  if (payload.isActive === true && ownerId) {
+    const userChannels = await storage.getChannelsByUserId(ownerId);
+    await Promise.all(
+      userChannels
+        .filter((workspace) => workspace.id !== id && workspace.isActive)
+        .map((workspace) => storage.updateChannel(workspace.id, { isActive: false }))
+    );
+  }
+
+  const updated = await storage.updateChannel(id, payload as any);
+  res.json(updated);
 });
 
 
@@ -798,7 +894,7 @@ export const updateChannel = asyncHandler(async (req: Request, res: Response) =>
 
   // Re-subscribe to webhooks whenever access token or WABA ID key is present in the update payload
   const credentialsChanged = "accessToken" in req.body || "whatsappBusinessAccountId" in req.body;
-  if (credentialsChanged && channel.whatsappBusinessAccountId && channel.accessToken) {
+  if (credentialsChanged && !isWorkspaceShell(channel) && channel.whatsappBusinessAccountId && channel.accessToken) {
     try {
       await subscribeChannelToWebhook(channel);
     } catch (err) {
@@ -936,6 +1032,14 @@ export const checkChannelHealth = asyncHandler(async (req: Request, res: Respons
   const channel = await storage.getChannel(id);
   if (!channel) {
     throw new AppError(404, 'Channel not found');
+  }
+
+  if (isWorkspaceShell(channel)) {
+    return res.json({
+      status: "workspace",
+      details: { workspaceOnly: true },
+      lastCheck: null,
+    });
   }
 
   try {

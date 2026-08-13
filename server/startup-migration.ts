@@ -151,6 +151,35 @@ const steps: MigrationStep[] = [
   addColumnIfNotExists("users", "paypal_customer_id", "VARCHAR"),
   addColumnIfNotExists("users", "paystack_customer_code", "VARCHAR"),
   addColumnIfNotExists("users", "mercadopago_customer_id", "VARCHAR"),
+  addColumnIfNotExists("users", "public_client_id", "INTEGER"),
+  {
+    description: "Backfill public client IDs from 4298",
+    sql: `
+      WITH base AS (
+        SELECT GREATEST(4297, COALESCE(MAX(public_client_id), 4297)) AS current_max
+        FROM users
+      ),
+      numbered AS (
+        SELECT u.id, base.current_max + ROW_NUMBER() OVER (ORDER BY u.created_at NULLS LAST, u.id)::int AS next_public_client_id
+        FROM users u
+        CROSS JOIN base
+        WHERE u.role = 'admin' AND u.public_client_id IS NULL
+      )
+      UPDATE users u
+      SET public_client_id = numbered.next_public_client_id
+      FROM numbered
+      WHERE u.id = numbered.id;
+    `,
+    logRowCount: true,
+  },
+  {
+    description: "Create unique public client ID index",
+    sql: `
+      CREATE UNIQUE INDEX IF NOT EXISTS users_public_client_id_idx
+        ON users (public_client_id)
+        WHERE public_client_id IS NOT NULL;
+    `,
+  },
 // ────────────────────────────────────────────────────
   // plans
 // ────────────────────────────────────────────────────
@@ -604,6 +633,64 @@ const steps: MigrationStep[] = [
         ADD COLUMN IF NOT EXISTS white_label_notes TEXT;
     `,
   },
+  {
+    description: "Backfill white-label owner on legacy client channels",
+    sql: `
+      UPDATE channels c
+      SET white_label_client_id = c.created_by
+      FROM users u
+      WHERE c.white_label_client_id IS NULL
+        AND c.created_by = u.id
+        AND u.role = 'admin';
+    `,
+    logRowCount: true,
+  },
+  {
+    description: "Create default workspace for existing clients without one",
+    sql: `
+      INSERT INTO channels (
+        name,
+        phone_number_id,
+        access_token,
+        phone_number,
+        whatsapp_business_account_id,
+        app_id,
+        is_active,
+        health_status,
+        health_details,
+        connection_method,
+        created_by,
+        white_label_client_id,
+        white_label_workspace_type,
+        white_label_points,
+        white_label_auto_renew
+      )
+      SELECT
+        COALESCE(NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''), u.username, split_part(u.email, '@', 1), 'Client') || ' Workspace',
+        'workspace-' || u.id,
+        '',
+        NULL,
+        NULL,
+        NULL,
+        true,
+        'unknown',
+        '{"workspaceOnly":true}'::jsonb,
+        'workspace',
+        u.id,
+        u.id,
+        'free',
+        0,
+        false
+      FROM users u
+      WHERE u.role = 'admin'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM channels c
+          WHERE COALESCE(c.white_label_client_id, NULLIF(c.created_by,'')) = u.id
+        );
+    `,
+    logRowCount: true,
+  },
 
   {
     description: "Create white-label settings table (if not exists)",
@@ -691,6 +778,127 @@ const steps: MigrationStep[] = [
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS white_label_workspace_addons_workspace_idx ON white_label_workspace_addons(workspace_id);
+    `,
+  },
+
+  {
+    description: "Create white-label plan configs table (if not exists)",
+    sql: `
+      CREATE TABLE IF NOT EXISTS white_label_plan_configs (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        plan_key VARCHAR(80) NOT NULL UNIQUE,
+        plan_name TEXT NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'active',
+        display_price NUMERIC(10,2) DEFAULT 0,
+        cost_price NUMERIC(10,2) DEFAULT 0,
+        billing_cycle VARCHAR(20) DEFAULT 'monthly',
+        badge VARCHAR(80),
+        description TEXT,
+        hide_usage_counts BOOLEAN DEFAULT false,
+        enabled_features JSONB DEFAULT '[]'::jsonb,
+        disabled_features JSONB DEFAULT '[]'::jsonb,
+        gateway_metadata JSONB DEFAULT '{}'::jsonb,
+        created_by VARCHAR REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `,
+  },
+
+  {
+    description: "Seed default white-label plan configs",
+    sql: `
+      INSERT INTO white_label_plan_configs (plan_key, plan_name, status, display_price, cost_price, billing_cycle, badge, enabled_features, disabled_features)
+      VALUES
+        ('waba_demo', 'WABA DEMO', 'active', 0, 0, 'monthly', 'Demo',
+          '["whatsapp_cloud","live_chat","contacts","templates","campaigns","analytics","api_keys"]'::jsonb,
+          '["automations","chatbot_flow","ai_assistant","ai_calling","team_inbox","groups","webhooks","google_sheets","email_marketing","multi_workspace","team_members","broadcast_scheduling","template_sync","conversation_assignment","labels_tags"]'::jsonb),
+        ('activated', 'Activated', 'active', 8500, 10, 'monthly', 'Active',
+          '["whatsapp_cloud","live_chat","contacts","templates","campaigns","analytics","automations","team_inbox","groups","api_keys","webhooks"]'::jsonb,
+          '["chatbot_flow","ai_assistant","ai_calling","google_sheets","email_marketing","multi_workspace","team_members","broadcast_scheduling","template_sync","conversation_assignment","labels_tags"]'::jsonb),
+        ('waba_business', 'WABA Business Plan', 'active', 15000, 25, 'monthly', 'Business',
+          '["whatsapp_cloud","live_chat","contacts","templates","campaigns","analytics","automations","chatbot_flow","ai_assistant","team_inbox","groups","api_keys","webhooks","google_sheets","multi_workspace","team_members","broadcast_scheduling","template_sync","conversation_assignment","labels_tags"]'::jsonb,
+          '["ai_calling","email_marketing"]'::jsonb),
+        ('waba_individual', 'WABA Individual Plan', 'active', 3500, 5, 'monthly', 'Individual',
+          '["whatsapp_cloud","live_chat","contacts","templates","campaigns","analytics"]'::jsonb,
+          '["automations","chatbot_flow","ai_assistant","ai_calling","team_inbox","groups","api_keys","webhooks","google_sheets","email_marketing","multi_workspace","team_members","broadcast_scheduling","template_sync","conversation_assignment","labels_tags"]'::jsonb)
+      ON CONFLICT (plan_key) DO NOTHING;
+    `,
+  },
+
+  {
+    description: "Create white-label addon catalog table (if not exists)",
+    sql: `
+      CREATE TABLE IF NOT EXISTS white_label_addon_catalog (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        addon_key VARCHAR(80) NOT NULL UNIQUE,
+        addon_name TEXT NOT NULL,
+        description TEXT,
+        cost_price NUMERIC(10,2) DEFAULT 0,
+        points NUMERIC(10,2) DEFAULT 0,
+        label TEXT,
+        status VARCHAR(20) NOT NULL DEFAULT 'active',
+        display_order INTEGER DEFAULT 0,
+        metadata JSONB DEFAULT '{}'::jsonb,
+        created_by VARCHAR REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `,
+  },
+
+  {
+    description: "Seed default white-label addon catalog",
+    sql: `
+      INSERT INTO white_label_addon_catalog (addon_key, addon_name, description, cost_price, points, label, status, display_order)
+      VALUES
+        ('bot', 'Extra bot', 'Extra 1 bot, $5/month', 5, 30, 'Extra 1 bot, 30 points/month', 'active', 10),
+        ('member', 'Extra member', 'Extra 1 member, $5/month', 5, 25, 'Extra 1 member, 25 points/month', 'active', 20),
+        ('bot_user', 'Extra bot users', 'Extra 1,000 bot users, $5/month', 5, 10, 'Extra 1,000 bot users, 10 points/month', 'active', 30),
+        ('bot_user_large', 'Extra large bot users', 'Extra 10,000 bot users, $30/month', 30, 99, 'Extra 10,000 bot users, 99 points/month', 'active', 40),
+        ('inbound_webhook', 'Inbound webhook', 'Inbound Webhook - per 1,000 requests, $20/month', 20, 20, 'Inbound Webhook - per 1,000 requests, 20 points/month', 'inactive', 50),
+        ('timeout', 'External request timeout', 'OpenAI/External Request Timeout - per 10 seconds, $10/month', 10, 20, 'OpenAI/External Request Timeout - per 10 seconds, 20 points/month', 'inactive', 60),
+        ('lists', 'Tickets/Lists', 'Tickets/Lists, $10/month', 10, 10, 'Tickets/Lists, 10 points/month', 'inactive', 70),
+        ('fb_wa_calls', 'WhatsApp/Messenger Calls', 'WhatsApp/Messenger Calls - per 500 calls, $10/month', 10, 10, 'WhatsApp/Messenger Calls - per 500 calls, 10 points/month', 'active', 80),
+        ('chat_msg_retention', 'Chat message retention', 'Chat Message Retention (3 years), $50/month', 50, 50, 'Chat Message Retention (3 years), 50 points/month', 'active', 90),
+        ('node', 'Extra nodes', 'Extra Nodes - per 1,000 nodes per bot, $20/month', 20, 20, 'Extra Nodes - per 1,000 nodes per bot, 20 points/month', 'active', 100),
+        ('custom_api', 'API rate limit', 'API Rate Limit - per 1,000 extra requests/hour per bot, $50/month', 50, 50, 'API Rate Limit - per 1,000 extra requests/hour per bot, 50 points/month', 'active', 110)
+      ON CONFLICT (addon_key) DO NOTHING;
+    `,
+  },
+
+  {
+    description: "Create white-label topup options table (if not exists)",
+    sql: `
+      CREATE TABLE IF NOT EXISTS white_label_topup_options (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        display_order INTEGER DEFAULT 0,
+        currency VARCHAR(10) NOT NULL DEFAULT 'USD',
+        amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+        points NUMERIC(14,2) NOT NULL DEFAULT 0,
+        label TEXT NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'active',
+        metadata JSONB DEFAULT '{}'::jsonb,
+        created_by VARCHAR REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `,
+  },
+
+  {
+    description: "Seed default white-label topup options",
+    sql: `
+      INSERT INTO white_label_topup_options (display_order, currency, amount, points, label, status)
+      SELECT * FROM (VALUES
+        (10, 'USD', 1000::numeric, 1000::numeric, 'Credits $1000', 'active'),
+        (20, 'USD', 1500::numeric, 1500::numeric, 'Credits $1500', 'active'),
+        (30, 'USD', 3500::numeric, 3500::numeric, 'Credits $3500', 'active'),
+        (40, 'USD', 5000::numeric, 5000::numeric, 'Credits $5000', 'active'),
+        (50, 'USD', 10000::numeric, 10000::numeric, 'Credits $10000', 'active'),
+        (60, 'USD', 20000::numeric, 20000::numeric, 'Credits $20000', 'active')
+      ) AS seed(display_order, currency, amount, points, label, status)
+      WHERE NOT EXISTS (SELECT 1 FROM white_label_topup_options);
     `,
   },
 

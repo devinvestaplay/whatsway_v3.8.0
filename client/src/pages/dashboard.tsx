@@ -67,6 +67,27 @@ export default function Dashboard() {
     },
   });
 
+  const isWorkspaceChannel =
+    !!activeChannel &&
+    (!activeChannel.accessToken || activeChannel.connectionMethod === "workspace");
+  const activeChannelName = activeChannel?.name || t("dashboard.noChannelSelected");
+  const activeChannelPhone = activeChannel?.phoneNumber || "";
+  const activeChannelDisplay = activeChannel
+    ? activeChannelPhone
+      ? `${activeChannelName} (${activeChannelPhone})`
+      : activeChannelName
+    : t("dashboard.noChannelSelected");
+  const maskedActiveChannelDisplay = activeChannel
+    ? activeChannelPhone
+      ? `${activeChannelName.slice(0, -1).replace(/./g, "*") + activeChannelName.slice(-1)} (${activeChannelPhone.slice(0, -4).replace(/\d/g, "*") + activeChannelPhone.slice(-4)})`
+      : activeChannelName
+    : t("dashboard.noChannelSelected");
+  const healthDetails = activeChannel?.healthDetails ?? {};
+  const lastHealthCheck = activeChannel?.lastHealthCheck
+    ? new Date(activeChannel.lastHealthCheck)
+    : null;
+  const hasValidLastHealthCheck = !!lastHealthCheck && !Number.isNaN(lastHealthCheck.getTime());
+
   const isAdmin = user?.role === "superadmin";
 
   const { data: activityLogs = [], isLoading } = useQuery({
@@ -679,20 +700,8 @@ export default function Dashboard() {
                         </h4>
                         <p className="text-xs sm:text-sm text-gray-600 truncate">
                           {user?.username
-                            ? activeChannel
-                              ? `${activeChannel.name
-                                .slice(0, -1)
-                                .replace(/./g, "*") +
-                              activeChannel.name.slice(-1)
-                              } (${activeChannel.phoneNumber
-                                .slice(0, -4)
-                                .replace(/\d/g, "*") +
-                              activeChannel.phoneNumber.slice(-4)
-                              })`
-                              : t("dashboard.noChannelSelected")
-                            : activeChannel
-                              ? `${activeChannel.name} (${activeChannel.phoneNumber})`
-                              : t("dashboard.noChannelSelected")}
+                            ? maskedActiveChannelDisplay
+                            : activeChannelDisplay}
                         </p>
                       </div>
                     </div>
@@ -722,7 +731,7 @@ export default function Dashboard() {
                   </div>
 
                     {/* Channel Quality */}
-                    {activeChannel && (
+                    {activeChannel && !isWorkspaceChannel && (
                       <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg">
                         <div className="flex items-center space-x-3">
                           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
@@ -734,13 +743,14 @@ export default function Dashboard() {
                             </h4>
                             <p className="text-sm text-gray-600">
                               {t("dashboard.rating")}:{" "}
-                              {activeChannel?.healthDetails.quality_rating || "N/A"}
+                              {(healthDetails as any).quality_rating || "N/A"}
                             </p>
                           </div>
                         </div>
                         <span className="text-xs text-gray-500">
-                          {t("dashboard.lastChecked")}{" "}
-                          {formatDistanceToNow(new Date(activeChannel.lastHealthCheck), { addSuffix: true })}
+                          {hasValidLastHealthCheck
+                            ? `${t("dashboard.lastChecked")} ${formatDistanceToNow(lastHealthCheck as Date, { addSuffix: true })}`
+                            : t("dashboard.lastChecked")}
                         </span>
                       </div>
                     )}
@@ -757,7 +767,7 @@ export default function Dashboard() {
                       </div>
                       <div className="text-center p-3 bg-gray-50 rounded-lg">
                         <p className="text-lg font-bold text-gray-900">
-                          {activeChannel?.healthDetails.name_status || "N/A"}
+                          {(healthDetails as any).name_status || "N/A"}
                         </p>
                         <p className="text-xs text-gray-600">
                           {t("dashboard.apiStatus")}
@@ -766,8 +776,8 @@ export default function Dashboard() {
                     </div>
 
                     {/* Daily Limit */}
-                    {(() => {
-                      const tierKey = activeChannel?.healthDetails.messaging_limit as string | undefined;
+                    {!isWorkspaceChannel && (() => {
+                      const tierKey = (healthDetails as any).messaging_limit as string | undefined;
                       const tierLimitMap: Record<string, number> = {
                         TIER_250: 250,
                         TIER_1K: 1000,

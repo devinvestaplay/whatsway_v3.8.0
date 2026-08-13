@@ -49,6 +49,9 @@ export function registerChannelRoutes(app: Express) {
   // Get active channel
   app.get("/api/channels/active",requireAuth, channelsController.getActiveChannel);
 
+  app.post("/api/workspaces", requireAuth, channelsController.createWorkspace);
+  app.patch("/api/workspaces/:id", requireAuth, channelsController.updateWorkspace);
+
   // Create channel
   app.post("/api/channels",
     requireAuth, validateRequest(insertChannelSchema), requireSubscription("channel"),

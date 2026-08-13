@@ -68,9 +68,10 @@ import {
   Radio,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, readApiJson } from "@/lib/queryClient";
 import type { Channel } from "@shared/schema";
 import { Loading } from "@/components/ui/loading";
+import { Input } from "@/components/ui/input";
 import { ChannelDialog } from "./ChannelDialog";
 import { BusinessProfileEditor } from "./BusinessProfileEditor";
 import { DisplayNameEditor } from "./DisplayNameEditor";
@@ -113,6 +114,8 @@ export function ChannelSettings() {
   const [showSuccessGuidance, setShowSuccessGuidance] = useState(false);
   const [lastConnectedCoexistence, setLastConnectedCoexistence] = useState(false);
   const [channelProcessing, setChannelProcessing] = useState<{ status: "processing" | "error"; errorMessage?: string } | null>(null);
+  const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
+  const [workspaceName, setWorkspaceName] = useState("");
   const { toast } = useToast();
   const { user } = useAuth();
   const { selectedChannel, setSelectedChannel } = useChannelContext();
@@ -122,7 +125,34 @@ export function ChannelSettings() {
     queryFn: async () => {
       const response = await apiRequest("GET", "/api/channels");
       const json = await response.json();
-      return json.data ?? [];
+      return Array.isArray(json) ? json : json.data ?? [];
+    },
+  });
+
+  const createWorkspaceMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/workspaces", {
+        name: workspaceName.trim(),
+      });
+      return readApiJson<Channel>(response, "Workspace API is not available");
+    },
+    onSuccess: async (workspace: Channel) => {
+      setWorkspaceName("");
+      setShowCreateWorkspace(false);
+      await queryClient.invalidateQueries({ queryKey: ["/api/channels"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/channels/active"] });
+      setSelectedChannel(workspace);
+      toast({
+        title: "Workspace created",
+        description: "Your workspace has been created successfully.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Workspace not created",
+        description: error.message,
+        variant: "destructive",
+      });
     },
   });
 
@@ -511,6 +541,20 @@ export function ChannelSettings() {
             </CardTitle>
 
             <div className="flex items-center gap-2">
+              {user?.role !== "team" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setWorkspaceName("");
+                    setShowCreateWorkspace(true);
+                  }}
+                  disabled={user?.username === "demouser"}
+                >
+                  <Building2 className="w-4 h-4 mr-2" />
+                  New Workspace
+                </Button>
+              )}
               {channels.length > 0 && (
                 <Button
                   variant="outline"
@@ -592,6 +636,12 @@ export function ChannelSettings() {
                         {channel.isActive && (
                           <Badge variant="success" className="text-xs">
                             {t("settings.channel_setting.active")}
+                          </Badge>
+                        )}
+                        {((channel as any).connectionMethod === "workspace" || !channel.accessToken) && (
+                          <Badge variant="secondary" className="text-xs flex items-center gap-1 bg-emerald-50 text-emerald-700 border-emerald-200">
+                            <Building2 className="w-3 h-3" />
+                            Workspace
                           </Badge>
                         )}
                         {!channel.isActive && (
@@ -1645,6 +1695,41 @@ export function ChannelSettings() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showCreateWorkspace} onOpenChange={setShowCreateWorkspace}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Building2 className="w-5 h-5 text-emerald-600" />
+              Create Workspace
+            </DialogTitle>
+            <DialogDescription>
+              Add a workspace for a team, brand, or business unit.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            <Input
+              value={workspaceName}
+              onChange={(event) => setWorkspaceName(event.target.value)}
+              placeholder="Renaissance Real Estate"
+              autoFocus
+            />
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCreateWorkspace(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => createWorkspaceMutation.mutate()}
+              disabled={!workspaceName.trim() || createWorkspaceMutation.isPending}
+            >
+              {createWorkspaceMutation.isPending ? "Creating..." : "Create Workspace"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

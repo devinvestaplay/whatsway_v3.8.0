@@ -26,9 +26,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Plus, Phone, Check, Loader2, AlertTriangle, ShieldAlert } from "lucide-react";
+import { Plus, Phone, Check, Loader2, AlertTriangle, ShieldAlert, Building2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, readApiJson } from "@/lib/queryClient";
 import { useChannelContext } from "@/contexts/channel-context";
 import { useAuth } from "@/contexts/auth-context";
 import {
@@ -37,23 +37,19 @@ import {
   DialogTitle,
   DialogHeader,
   DialogDescription,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import type { Channel as SchemaChannel } from "@shared/schema";
 
-interface Channel {
-  id: string;
-  name: string;
-  isActive: boolean;
-  phoneNumber?: string;
-  healthStatus?: string;
-  [key: string]: any;
-}
+type Channel = SchemaChannel & { [key: string]: any };
 
 interface ChannelsResponse {
   data: Channel[];
@@ -86,6 +82,8 @@ export function ChannelSwitcher() {
   const [healthWarningChannel, setHealthWarningChannel] = useState<string>("");
   const [channelHealthMap, setChannelHealthMap] = useState<Record<string, string>>({});
   const [checkingHealthForId, setCheckingHealthForId] = useState<string | null>(null);
+  const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
+  const [workspaceName, setWorkspaceName] = useState("");
   const healthCheckCounter = useRef(0);
 
   const userIdNew = user?.role === "team" ? user?.createdBy : user?.id;
@@ -117,11 +115,49 @@ export function ChannelSwitcher() {
     },
   });
 
+  const createWorkspaceMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/workspaces", {
+        name: workspaceName.trim(),
+      });
+      return readApiJson<Channel>(res, "Workspace API is not available");
+    },
+    onSuccess: async (workspace: Channel) => {
+      setWorkspaceName("");
+      setShowCreateWorkspace(false);
+      await queryClient.invalidateQueries({
+        predicate: (query) => {
+          const key = query.queryKey[0];
+          return typeof key === "string" && key.startsWith("/api/channels");
+        },
+      });
+      setSelectedChannelId(workspace.id);
+      setSelectedChannel(workspace);
+      toast({
+        title: "Workspace created",
+        description: "Your new workspace is ready.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Workspace not created",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const checkChannelHealth = useCallback(async (
     channelId: string,
     channelName: string,
     showModal: boolean
   ) => {
+    const channel = channels.find((c) => c.id === channelId);
+    if (!channel?.accessToken || channel.connectionMethod === "workspace") {
+      setChannelHealthMap(prev => ({ ...prev, [channelId]: "workspace" }));
+      return;
+    }
+
     const requestId = ++healthCheckCounter.current;
     try {
       setCheckingHealthForId(channelId);
@@ -157,7 +193,7 @@ export function ChannelSwitcher() {
         setCheckingHealthForId(null);
       }
     }
-  }, [toast]);
+  }, [channels, toast]);
 
   useEffect(() => {
     if (channels.length > 0) {
@@ -233,6 +269,9 @@ export function ChannelSwitcher() {
 
   const getHealthDot = (channelId: string) => {
     const status = channelHealthMap[channelId];
+    if (status === "workspace") {
+      return <span className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" title="Workspace" />;
+    }
     if (status === "healthy") {
       return <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" title="Connected" />;
     } else if (status === "warning") {
@@ -241,6 +280,13 @@ export function ChannelSwitcher() {
       return <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0 animate-pulse" title="Token expired or invalid" />;
     }
     return <span className="w-2 h-2 rounded-full bg-gray-300 flex-shrink-0" title="Unknown" />;
+  };
+
+  const channelIcon = (channel?: Channel | null) => {
+    if (!channel?.accessToken || channel.connectionMethod === "workspace") {
+      return <Building2 className="w-3.5 h-3.5 flex-shrink-0 text-emerald-600" />;
+    }
+    return <Phone className="w-3.5 h-3.5 flex-shrink-0 text-green-600" />;
   };
 
   if (isLoading || isActiveChannelLoading) {
@@ -260,7 +306,7 @@ export function ChannelSwitcher() {
               channels.find((c) => c.id === selectedChannelId) ? (
                 <div className="flex items-center gap-2">
                   {getHealthDot(selectedChannelId)}
-                  <Phone className="w-3.5 h-3.5 flex-shrink-0 text-green-600" />
+                  {channelIcon(channels.find((c) => c.id === selectedChannelId))}
                   <span className="truncate text-sm">
                     {channels.find((c) => c.id === selectedChannelId)?.name}
                   </span>
@@ -278,7 +324,7 @@ export function ChannelSwitcher() {
               <SelectItem key={channel.id} value={channel.id}>
                 <div className="flex items-center gap-2">
                   {getHealthDot(channel.id)}
-                  <Phone className="w-3.5 h-3.5 text-green-600" />
+                  {channelIcon(channel)}
                   <span>{channel.name}</span>
                   {channelHealthMap[channel.id] === "error" && (
                     <AlertTriangle className="w-3 h-3 text-red-500 ml-1" />
@@ -309,6 +355,29 @@ export function ChannelSwitcher() {
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
+
+        {user?.role !== "team" && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  onClick={() => {
+                    setWorkspaceName("");
+                    setShowCreateWorkspace(true);
+                  }}
+                  className="h-9 w-9 flex-shrink-0 border-dashed border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+                >
+                  <Building2 className="w-4 h-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                <p>Create workspace</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
       </div>
 
       {totalPages > 1 && (
@@ -402,6 +471,42 @@ export function ChannelSwitcher() {
                 Go to Settings
               </Button>
             </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {showCreateWorkspace && (
+        <Dialog open={showCreateWorkspace} onOpenChange={setShowCreateWorkspace}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Create Workspace</DialogTitle>
+              <DialogDescription>
+                Add a workspace for a team, brand, or business unit.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-2">
+              <Label htmlFor="workspaceName">Workspace name</Label>
+              <Input
+                id="workspaceName"
+                value={workspaceName}
+                onChange={(event) => setWorkspaceName(event.target.value)}
+                placeholder="Renaissance Real Estate"
+                autoFocus
+              />
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowCreateWorkspace(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={() => createWorkspaceMutation.mutate()}
+                disabled={!workspaceName.trim() || createWorkspaceMutation.isPending}
+              >
+                {createWorkspaceMutation.isPending ? "Creating..." : "Create"}
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       )}
