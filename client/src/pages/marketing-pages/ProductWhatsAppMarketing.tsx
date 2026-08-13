@@ -1,5 +1,6 @@
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import {
   ArrowRight,
   BarChart3,
@@ -30,7 +31,15 @@ import {
 } from "lucide-react";
 import { AppSettings } from "@/types/types";
 
-const founderLogos = ["Lenskart", "Quikr", "The Man Co", "HDFC", "Reliance", "Edelweiss", "Apollo"];
+const founderLogos = [
+  { name: "Lenskart", url: "https://logo.clearbit.com/lenskart.com" },
+  { name: "Quikr", url: "https://logo.clearbit.com/quikr.com" },
+  { name: "The Man Co", url: "https://logo.clearbit.com/themancompany.com" },
+  { name: "HDFC", url: "https://logo.clearbit.com/hdfcbank.com" },
+  { name: "Reliance", url: "https://logo.clearbit.com/relianceindustries.com" },
+  { name: "Edelweiss", url: "https://logo.clearbit.com/edelweissfin.com" },
+  { name: "Apollo", url: "https://logo.clearbit.com/apollohospitals.com" },
+];
 
 const stats = [
   { value: "98%", label: "Open rates" },
@@ -126,6 +135,26 @@ function HeroVisual() {
   );
 }
 
+function FounderLogoCard({ logo }: { logo: { name: string; url: string } }) {
+  const [failed, setFailed] = useState(false);
+
+  return (
+    <div className="logo-item mx-3 inline-flex h-16 min-w-[150px] items-center justify-center rounded-xl bg-white px-5 py-3 shadow-sm ring-1 ring-slate-100">
+      {failed ? (
+        <span className="text-sm font-black text-slate-500">{logo.name}</span>
+      ) : (
+        <img
+          src={logo.url}
+          alt={`${logo.name} logo`}
+          loading="lazy"
+          className="max-h-9 max-w-[112px] object-contain"
+          onError={() => setFailed(true)}
+        />
+      )}
+    </div>
+  );
+}
+
 export default function ProductWhatsappMarketingPage() {
   const { data: brandSettings } = useQuery<AppSettings>({
     queryKey: ["/api/brand-settings"],
@@ -145,7 +174,7 @@ export default function ProductWhatsappMarketingPage() {
               Meet India's Best <span className="block text-green-500">WhatsApp Marketing Software</span>
             </h1>
             <p className="mt-5 text-base leading-7 text-slate-600">
-              Achieve up to 5X ROI with {appName}'s AI-powered WhatsApp marketing platform. Launch WhatsApp campaigns, automate workflows, and convert customers faster.
+              Achieve up to 7X ROI with {appName}'s AI-powered WhatsApp marketing platform. Launch WhatsApp campaigns, automate workflows, and convert customers faster.
             </p>
             <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row lg:justify-start">
               <Link href="/signup" className="inline-flex h-12 items-center justify-center rounded-md bg-green-500 px-6 text-sm font-black text-white transition hover:bg-green-600">
@@ -165,10 +194,20 @@ export default function ProductWhatsappMarketingPage() {
         <div className="mx-auto max-w-[1180px] px-4 text-center sm:px-6 lg:px-8">
           <h2 className="text-2xl font-black sm:text-3xl">Founders and Marketers Love us</h2>
           <p className="mt-2 text-sm text-slate-500">Trusted by 50,000+ businesses across D2C, education, finance and ecommerce.</p>
-          <div className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-            {founderLogos.map((logo) => (
-              <div key={logo} className="rounded-xl bg-white p-3 text-sm font-black text-slate-500 shadow-sm ring-1 ring-slate-100">{logo}</div>
-            ))}
+          <div className="mt-7">
+            <div className="relative overflow-hidden">
+              <div className="logo-marquee flex items-center">
+                {[...founderLogos, ...founderLogos].map((logo, idx) => (
+                  <FounderLogoCard key={logo.name + String(idx)} logo={logo} />
+                ))}
+              </div>
+            </div>
+            <style>{`
+              .logo-marquee { display: flex; gap: 12px; width: max-content; animation: marquee-scroll-rtl 18s linear infinite; }
+              .logo-item { display: inline-flex; }
+              @keyframes marquee-scroll-rtl { from { transform: translateX(0%); } to { transform: translateX(-50%); } }
+              @media (prefers-reduced-motion: reduce) { .logo-marquee { animation: none; } }
+            `}</style>
           </div>
         </div>
       </section>

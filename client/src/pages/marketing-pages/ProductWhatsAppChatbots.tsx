@@ -24,6 +24,68 @@ const engagement = [
 ];
 const faqs = ["What is a WhatsApp chatbot and how does it work?", "How can a WhatsApp chatbot help my business?", "Do I need coding skills to create a WhatsApp chatbot?", "Can I integrate a WhatsApp chatbot with my existing tools?", "Can chatbots handle payments and order tracking?", "Can I get a FREE trial of WhatsApp chatbot before purchasing?"];
 
+function AddonVisual({ index }: { index: number }) {
+  if (index === 0) {
+    return (
+      <div className="grid h-28 grid-cols-[1fr_120px] gap-3">
+        <div className="space-y-2">
+          {["Product shared", "Lead details captured", "Sales handoff ready"].map((item) => (
+            <div key={item} className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm">
+              <CheckCircle2 className="h-4 w-4 text-green-500" />
+              {item}
+            </div>
+          ))}
+        </div>
+        <div className="rounded-xl bg-slate-950 p-2">
+          <div className="h-full rounded-lg bg-green-50 p-2">
+            <div className="rounded-md bg-white p-2 text-[10px] font-black text-slate-800">Best plan?</div>
+            <div className="ml-auto mt-2 rounded-md bg-green-500 p-2 text-[10px] font-black text-white">Here are 3 options</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (index === 1) {
+    return (
+      <div className="flex h-28 items-center justify-between gap-3">
+        {["Start", "Question", "Action", "Agent"].map((step, idx) => (
+          <div key={step} className="relative flex flex-1 flex-col items-center">
+            <div className="flex h-12 w-full items-center justify-center rounded-lg bg-white text-xs font-black text-slate-700 shadow-sm">{step}</div>
+            {idx < 3 && <ArrowRight className="absolute -right-4 top-4 h-4 w-4 text-green-500" />}
+            <span className="mt-2 h-2 w-2 rounded-full bg-green-500" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (index === 2) {
+    return (
+      <div className="grid h-28 grid-cols-2 gap-3">
+        <div className="rounded-xl bg-white p-3 shadow-sm">
+          <p className="text-[11px] font-black text-slate-500">Auto replies</p>
+          <p className="mt-2 text-2xl font-black text-green-600">24/7</p>
+          <p className="text-[10px] text-slate-500">Pricing, bookings, FAQs</p>
+        </div>
+        <div className="space-y-2">
+          {["New lead", "Follow-up sent", "Agent notified"].map((item) => (
+            <div key={item} className="rounded-md bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm">{item}</div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="grid h-28 grid-cols-4 items-center gap-3">
+      {["CRM", "Shop", "Sheet", "API"].map((tool) => (
+        <div key={tool} className="flex h-16 flex-col items-center justify-center rounded-xl bg-white text-xs font-black text-slate-700 shadow-sm">
+          <Globe2 className="mb-1 h-5 w-5 text-green-500" />
+          {tool}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function ProductWhatsappChatbotsPage() {
   const { data: settings } = useQuery<AppSettings>({ queryKey: ["/api/brand-settings"], staleTime: 1000 * 60 * 5 });
   const appName = settings?.title || "WhatsWay";
@@ -49,7 +111,7 @@ export default function ProductWhatsappChatbotsPage() {
 
       <section className="px-4 py-14 text-center sm:px-6 lg:px-8"><div className="mx-auto max-w-6xl"><h2 className="text-2xl font-black sm:text-3xl">Why Build Smart WhatsApp Chatbots with {appName}</h2><p className="mx-auto mt-3 max-w-3xl text-slate-600">Stay ready to close more conversations across sales, support, and commerce.</p><div className="mt-8 grid gap-5 md:grid-cols-3">{smartReasons.map((item) => <div key={item.title} className="rounded-md border border-slate-100 bg-white p-5 shadow-sm"><Sparkles className="mx-auto h-7 w-7 text-green-500" /><h3 className="mt-4 font-black">{item.title}</h3><p className="mt-2 text-sm leading-6 text-slate-600">{item.text}</p></div>)}</div></div></section>
 
-      <section className="bg-slate-50 px-4 py-16 sm:px-6 lg:px-8"><div className="mx-auto max-w-7xl"><h2 className="text-center text-2xl font-black sm:text-3xl">Add-on Feature</h2><p className="mx-auto mt-3 max-w-3xl text-center text-slate-600">Unlock automation along with integrations, live chat, catalogs, and payments.</p><div className="mt-8 grid gap-5 md:grid-cols-2">{addons.map(({ icon: Icon, title, text }) => <div key={title} className="rounded-md border border-slate-100 bg-white p-6 shadow-sm"><Icon className="h-8 w-8 text-green-500" /><h3 className="mt-4 font-black">{title}</h3><p className="mt-2 text-sm leading-6 text-slate-600">{text}</p><div className="mt-5 rounded-xl bg-emerald-50 p-4"><div className="h-28 rounded-lg bg-white shadow-inner" /></div></div>)}</div></div></section>
+      <section className="bg-slate-50 px-4 py-16 sm:px-6 lg:px-8"><div className="mx-auto max-w-7xl"><h2 className="text-center text-2xl font-black sm:text-3xl">Add-on Feature</h2><p className="mx-auto mt-3 max-w-3xl text-center text-slate-600">Unlock automation along with integrations, live chat, catalogs, and payments.</p><div className="mt-8 grid gap-5 md:grid-cols-2">{addons.map(({ icon: Icon, title, text }, index) => <div key={title} className="rounded-md border border-slate-100 bg-white p-6 shadow-sm"><Icon className="h-8 w-8 text-green-500" /><h3 className="mt-4 font-black">{title}</h3><p className="mt-2 text-sm leading-6 text-slate-600">{text}</p><div className="mt-5 rounded-xl bg-emerald-50 p-4"><AddonVisual index={index} /></div></div>)}</div></div></section>
 
       <section className="px-4 py-12 sm:px-6 lg:px-8"><div className="mx-auto max-w-5xl text-center"><h2 className="text-2xl font-black">Founders & Marketers Love us</h2><div className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">{logos.map((logo) => <div key={logo} className="rounded-md border border-slate-100 px-3 py-3 text-sm font-black text-slate-500 shadow-sm">{logo}</div>)}</div></div></section>
 
