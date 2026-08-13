@@ -1731,6 +1731,20 @@ export const whiteLabelAuditLogs = pgTable("white_label_audit_logs", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
+export const marketingCmsLogos = pgTable("marketing_cms_logos", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 160 }).notNull(),
+  logoUrl: text("logo_url").notNull(),
+  placement: varchar("placement", { length: 80 }).notNull().default("founders"),
+  status: varchar("status", { length: 20 }).notNull().default("active"),
+  displayOrder: integer("display_order").default(0),
+  createdBy: varchar("created_by").references((): any => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+}, (table) => ({
+  placementIdx: index("marketing_cms_logos_placement_idx").on(table.placement),
+}));
+
 // Webhook Configuration table
 export const webhookConfigs = pgTable("webhook_configs", {
   id: varchar("id")

@@ -108,6 +108,7 @@ import StoresPage from "./pages/ecommerce/StoresPage";
 import AbandonedCarts from "./pages/ecommerce/AbandonedCarts";
 import CodOrdersPage from "@/pages/ecommerce/CodOrders";
 import WhiteLabel from "@/pages/WhiteLabel";
+import CmsLogos from "@/pages/CmsLogos";
 import { marketingRoutes } from "@/pages/marketing-pages/routes";
 
 
@@ -170,6 +171,7 @@ const ROUTE_PERMISSIONS: Record<string, string> = {
   "/master-subscriptions": "",
   "/app-update": "",
   "/white-label": "",
+  "/cms": "",
   "/ecommerce/stores": "",
   "/ecommerce/abandoned-carts": "",
   "/ecommerce/cod-orders" : ""
@@ -575,6 +577,12 @@ function ProtectedRoutes() {
           <Route path="/white-label">
             <PermissionRoute
               component={WhiteLabel}
+              requiredRoles={["superadmin"]}
+            />
+          </Route>
+          <Route path="/cms">
+            <PermissionRoute
+              component={CmsLogos}
               requiredRoles={["superadmin"]}
             />
           </Route>

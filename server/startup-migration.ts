@@ -974,6 +974,41 @@ const steps: MigrationStep[] = [
   },
 
   {
+    description: "Create marketing CMS logos table (if not exists)",
+    sql: `
+      CREATE TABLE IF NOT EXISTS marketing_cms_logos (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        name VARCHAR(160) NOT NULL,
+        logo_url TEXT NOT NULL,
+        placement VARCHAR(80) NOT NULL DEFAULT 'founders',
+        status VARCHAR(20) NOT NULL DEFAULT 'active',
+        display_order INTEGER DEFAULT 0,
+        created_by VARCHAR REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS marketing_cms_logos_placement_idx ON marketing_cms_logos(placement);
+    `,
+  },
+
+  {
+    description: "Seed default marketing CMS founder logos",
+    sql: `
+      INSERT INTO marketing_cms_logos (name, logo_url, placement, status, display_order)
+      SELECT * FROM (VALUES
+        ('Lenskart', 'https://logo.clearbit.com/lenskart.com', 'founders', 'active', 10),
+        ('Quikr', 'https://logo.clearbit.com/quikr.com', 'founders', 'active', 20),
+        ('The Man Co', 'https://logo.clearbit.com/themancompany.com', 'founders', 'active', 30),
+        ('HDFC', 'https://logo.clearbit.com/hdfcbank.com', 'founders', 'active', 40),
+        ('Reliance', 'https://logo.clearbit.com/relianceindustries.com', 'founders', 'active', 50),
+        ('Edelweiss', 'https://logo.clearbit.com/edelweissfin.com', 'founders', 'active', 60),
+        ('Apollo', 'https://logo.clearbit.com/apollohospitals.com', 'founders', 'active', 70)
+      ) AS seed(name, logo_url, placement, status, display_order)
+      WHERE NOT EXISTS (SELECT 1 FROM marketing_cms_logos WHERE placement='founders');
+    `,
+  },
+
+  {
     description:
       "Convert all naive timestamp columns to timestamptz (interpret existing values as UTC)",
     sql: `

@@ -1,7 +1,43 @@
 import { Link } from "wouter";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { LucideIcon, ArrowRight, Bot, CalendarCheck, CheckCircle2, ClipboardList, FileText, Globe2, Headphones, MessageCircle, MousePointer2, Send, Users } from "lucide-react";
 
-export const featureLogos = ["Skullcandy", "Quikr", "PhysicsWallah", "HDFC", "HomeLane", "IndiaMART", "Gameskraft"];
+export const featureLogos = [
+  { name: "Lenskart", url: "https://logo.clearbit.com/lenskart.com" },
+  { name: "Quikr", url: "https://logo.clearbit.com/quikr.com" },
+  { name: "The Man Co", url: "https://logo.clearbit.com/themancompany.com" },
+  { name: "HDFC", url: "https://logo.clearbit.com/hdfcbank.com" },
+  { name: "Reliance", url: "https://logo.clearbit.com/relianceindustries.com" },
+  { name: "Edelweiss", url: "https://logo.clearbit.com/edelweissfin.com" },
+  { name: "Apollo", url: "https://logo.clearbit.com/apollohospitals.com" },
+];
+
+type CmsLogo = {
+  id: string;
+  name: string;
+  logo_url: string;
+};
+
+function LogoCard({ logo }: { logo: { name: string; url: string } }) {
+  const [failed, setFailed] = useState(false);
+
+  return (
+    <div className="flex h-16 items-center justify-center rounded-md border border-slate-100 bg-white px-3 py-3 text-sm font-black text-slate-500 shadow-sm">
+      {failed ? (
+        <span>{logo.name}</span>
+      ) : (
+        <img
+          src={logo.url}
+          alt={`${logo.name} logo`}
+          loading="lazy"
+          className="max-h-9 max-w-[112px] object-contain"
+          onError={() => setFailed(true)}
+        />
+      )}
+    </div>
+  );
+}
 
 export const engagementTools: Array<{ icon: LucideIcon; title: string; text: string }> = [
   { icon: Headphones, title: "Multiple Human Live Chat", text: "Enable multiple agents to manage customer conversations from one inbox." },
@@ -15,13 +51,22 @@ export const engagementTools: Array<{ icon: LucideIcon; title: string; text: str
 ];
 
 export function LogoStrip({ title = "Founders & Marketers Love us" }: { title?: string }) {
+  const { data: cmsLogoResponse } = useQuery<{ rows: CmsLogo[] }>({
+    queryKey: ["/api/cms/logos", "founders"],
+    queryFn: () => fetch("/api/cms/logos?placement=founders").then((res) => res.json()),
+    staleTime: 5 * 60 * 1000,
+  });
+  const logos = cmsLogoResponse?.rows?.length
+    ? cmsLogoResponse.rows.map((logo) => ({ name: logo.name, url: logo.logo_url }))
+    : featureLogos;
+
   return (
     <section className="px-4 py-12 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-5xl text-center">
         <h2 className="text-2xl font-black">{title}</h2>
         <p className="mt-2 text-sm text-slate-500">Trusted by 210,000+ businesses across 68+ countries</p>
         <div className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-          {featureLogos.map((logo) => <div key={logo} className="rounded-md border border-slate-100 bg-white px-3 py-3 text-sm font-black text-slate-500 shadow-sm">{logo}</div>)}
+          {logos.map((logo) => <LogoCard key={logo.name} logo={logo} />)}
         </div>
       </div>
     </section>

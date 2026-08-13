@@ -40,13 +40,40 @@ import {
 import { PlansDataTypes, AppSettings } from "@/types/types";
 
 const customerLogos = [
-  "Skullcandy",
-  "Quikr",
-  "PhysicsWallah",
-  "Brigade",
-  "IndiaMart",
-  "HomeLane",
+  { name: "Lenskart", url: "https://logo.clearbit.com/lenskart.com" },
+  { name: "Quikr", url: "https://logo.clearbit.com/quikr.com" },
+  { name: "The Man Co", url: "https://logo.clearbit.com/themancompany.com" },
+  { name: "HDFC", url: "https://logo.clearbit.com/hdfcbank.com" },
+  { name: "Reliance", url: "https://logo.clearbit.com/relianceindustries.com" },
+  { name: "Edelweiss", url: "https://logo.clearbit.com/edelweissfin.com" },
+  { name: "Apollo", url: "https://logo.clearbit.com/apollohospitals.com" },
 ];
+
+type CmsLogo = {
+  id: string;
+  name: string;
+  logo_url: string;
+};
+
+function HomeLogoCard({ logo }: { logo: { name: string; url: string } }) {
+  const [failed, setFailed] = React.useState(false);
+
+  return (
+    <div className="flex h-14 items-center justify-center rounded-2xl bg-slate-50 px-3 text-center text-sm font-black text-slate-500">
+      {failed ? (
+        <span>{logo.name}</span>
+      ) : (
+        <img
+          src={logo.url}
+          alt={`${logo.name} logo`}
+          loading="lazy"
+          className="max-h-8 max-w-[104px] object-contain"
+          onError={() => setFailed(true)}
+        />
+      )}
+    </div>
+  );
+}
 
 const broadcastBenefits = [
   {
@@ -168,10 +195,18 @@ const Home = () => {
     queryFn: () => fetch("/api/brand-settings").then((res) => res.json()),
     staleTime: 5 * 60 * 1000,
   });
+  const { data: cmsLogoResponse } = useQuery<{ rows: CmsLogo[] }>({
+    queryKey: ["/api/cms/logos", "founders"],
+    queryFn: () => fetch("/api/cms/logos?placement=founders").then((res) => res.json()),
+    staleTime: 5 * 60 * 1000,
+  });
 
   const appName = brandSettings?.title || "WhatsWay";
   const hasPlans =
     paymentProviders?.success && paymentProviders?.data?.length > 0;
+  const displayCustomerLogos = cmsLogoResponse?.rows?.length
+    ? cmsLogoResponse.rows.map((logo) => ({ name: logo.name, url: logo.logo_url }))
+    : customerLogos;
 
   return (
     <div className="overflow-hidden bg-white text-slate-950">
@@ -307,14 +342,7 @@ const Home = () => {
               Founders and marketers trust WhatsApp for growth
             </p>
             <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-              {customerLogos.map((logo) => (
-                <div
-                  key={logo}
-                  className="flex h-14 items-center justify-center rounded-2xl bg-slate-50 px-3 text-center text-sm font-black text-slate-500"
-                >
-                  {logo}
-                </div>
-              ))}
+              {displayCustomerLogos.map((logo) => <HomeLogoCard key={logo.name} logo={logo} />)}
             </div>
           </div>
         </div>

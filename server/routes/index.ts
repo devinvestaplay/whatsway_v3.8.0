@@ -65,6 +65,7 @@ import { registerRestApiV1Routes } from "./rest-api-v1.routes";
 import { registerAppUpdateRoutes } from "./app-update.routes";
 import { registerWhiteLabelRoutes } from "./white-label.routes";
 import { registerZiinaRoutes } from "./ziina.routes";
+import { registerCmsRoutes } from "./cms.routes";
 
 export async function registerRoutes(app: Express, existingServer?: Server): Promise<Server> {
   // Auth routes (no authentication required)
@@ -117,6 +118,7 @@ app.use(
   registerAppUpdateRoutes(app);
   registerWhiteLabelRoutes(app);
   registerZiinaRoutes(app);
+  registerCmsRoutes(app);
   
   // Team management routes
   app.use("/api/team", teamRoutes);

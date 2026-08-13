@@ -41,6 +41,12 @@ const founderLogos = [
   { name: "Apollo", url: "https://logo.clearbit.com/apollohospitals.com" },
 ];
 
+type CmsLogo = {
+  id: string;
+  name: string;
+  logo_url: string;
+};
+
 const stats = [
   { value: "98%", label: "Open rates" },
   { value: "45-60%", label: "Click rates" },
@@ -161,8 +167,16 @@ export default function ProductWhatsappMarketingPage() {
     queryFn: () => fetch("/api/brand-settings").then((res) => res.json()),
     staleTime: 5 * 60 * 1000,
   });
+  const { data: cmsLogoResponse } = useQuery<{ rows: CmsLogo[] }>({
+    queryKey: ["/api/cms/logos", "founders"],
+    queryFn: () => fetch("/api/cms/logos?placement=founders").then((res) => res.json()),
+    staleTime: 5 * 60 * 1000,
+  });
 
   const appName = brandSettings?.title || "WhatsWay";
+  const displayFounderLogos = cmsLogoResponse?.rows?.length
+    ? cmsLogoResponse.rows.map((logo) => ({ name: logo.name, url: logo.logo_url }))
+    : founderLogos;
 
   return (
     <div className="bg-white pt-40 text-slate-950 sm:pt-44">
@@ -197,7 +211,7 @@ export default function ProductWhatsappMarketingPage() {
           <div className="mt-7">
             <div className="relative overflow-hidden">
               <div className="logo-marquee flex items-center">
-                {[...founderLogos, ...founderLogos].map((logo, idx) => (
+                {[...displayFounderLogos, ...displayFounderLogos].map((logo, idx) => (
                   <FounderLogoCard key={logo.name + String(idx)} logo={logo} />
                 ))}
               </div>

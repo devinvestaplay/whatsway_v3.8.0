@@ -49,7 +49,8 @@ import {
   Plug,
   ChevronDown,
   Wallet,
-  Palette
+  Palette,
+  Image
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChannelSwitcher } from "@/components/channel-switcher";
@@ -340,6 +341,12 @@ const sidebarItemsCategories = [
         icon: Palette,
         path: "/white-label",
         color: "text-emerald-600",
+    },
+    {
+        name: "CMS",
+        icon: Image,
+        path: "/cms",
+        color: "text-sky-600",
     },
     {
         name: "navigation.master_campaigns",
