@@ -129,6 +129,31 @@ export default function Plans() {
       : {};
   };
 
+  const normalizeMultiCurrencyPrices = (rawPrices: unknown): Record<string, { monthly: string; annual: string }> => {
+    let prices = rawPrices;
+    if (typeof prices === "string") {
+      try {
+        prices = JSON.parse(prices);
+      } catch {
+        prices = {};
+      }
+    }
+    if (!prices || typeof prices !== "object" || Array.isArray(prices)) return {};
+
+    return Object.entries(prices as Record<string, any>).reduce<Record<string, { monthly: string; annual: string }>>(
+      (acc, [currencyCode, value]) => {
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          acc[currencyCode.toUpperCase()] = {
+            monthly: String(value.monthly ?? ""),
+            annual: String(value.annual ?? ""),
+          };
+        }
+        return acc;
+      },
+      {}
+    );
+  };
+
   const { data: currencyMapData } = useQuery<{
     success: boolean;
     data: {
@@ -150,7 +175,7 @@ export default function Plans() {
   // Filter currencies to only show those configured by admin, plus default/USD
   const displayedCurrencies = availableCurrencies.filter(cur => {
     if (cur === "USD" || cur === currency?.toUpperCase()) return true;
-    return plans.some(p => p.multiCurrencyPrices && p.multiCurrencyPrices[cur]);
+    return plans.some(p => normalizeMultiCurrencyPrices(p.multiCurrencyPrices)[cur]);
   });
 
   useEffect(() => {
@@ -461,7 +486,7 @@ export default function Plans() {
       buttonColor: plan.buttonColor || "bg-blue-500 hover:bg-blue-600",
       monthlyPrice: plan.monthlyPrice || "0",
       annualPrice: plan.annualPrice || "0",
-      multiCurrencyPrices: plan.multiCurrencyPrices || {},
+      multiCurrencyPrices: normalizeMultiCurrencyPrices(plan.multiCurrencyPrices),
       permissions: {
         channel: "",
         contacts: "",
@@ -469,20 +494,9 @@ export default function Plans() {
         campaign: "",
         apiRequestsPerMonth: "",
         apiRateLimitPerMinute: "",
-        ...(plan.permissions || {}),
+        ...normalizePlanPermissions(plan.permissions),
       },
-      features: (plan.features || []).map((f: any) => {
-        if (typeof f === "string") {
-          return { name: f, included: true };
-        }
-        if (typeof f === "object" && f !== null) {
-          return {
-            name: typeof f.name === "string" ? f.name : "",
-            included: typeof f.included === "boolean" ? f.included : true,
-          };
-        }
-        return { name: "", included: true };
-      }),
+      features: normalizePlanFeatures(plan.features),
     });
     setShowForm(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1254,6 +1268,7 @@ export default function Plans() {
                     const isPopular = plan.popular;
                     const planFeatures = normalizePlanFeatures(plan.features);
                     const planPermissions = normalizePlanPermissions(plan.permissions);
+                    const planMultiCurrencyPrices = normalizeMultiCurrencyPrices(plan.multiCurrencyPrices);
 
                     const isActivePlan = userPlanItems.some(
                       (p) =>
@@ -1279,9 +1294,9 @@ export default function Plans() {
                     let annualPrice = plan.annualPrice;
                     let planCurrencySymbol = currencySymbol; // Default to brand symbol
 
-                    if (selectedCurrency && plan.multiCurrencyPrices && plan.multiCurrencyPrices[selectedCurrency]) {
-                      monthlyPrice = plan.multiCurrencyPrices[selectedCurrency].monthly;
-                      annualPrice = plan.multiCurrencyPrices[selectedCurrency].annual;
+                    if (selectedCurrency && planMultiCurrencyPrices[selectedCurrency]) {
+                      monthlyPrice = planMultiCurrencyPrices[selectedCurrency].monthly;
+                      annualPrice = planMultiCurrencyPrices[selectedCurrency].annual;
                       planCurrencySymbol = currencySymbolMap[selectedCurrency] || selectedCurrency + " ";
                     }
 

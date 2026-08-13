@@ -35,15 +35,19 @@ export function AdminCreditBox() {
     enabled: !!user?.id,
   });
 
-  const activePlans =
-    activeplandata?.data?.filter((p) => p.subscription.status === "active") ||
-    [];
+  const activePlans = Array.isArray(activeplandata?.data)
+    ? activeplandata.data.filter((p) => p?.subscription?.status === "active")
+    : [];
 
   const hasActivePlan = activePlans.length > 0;
 
   const totalPermissions: Record<string, string | number> = {};
   activePlans.forEach((plan) => {
-    const permissions = plan.subscription.planData?.permissions || {};
+    const rawPermissions = plan.subscription.planData?.permissions || {};
+    const permissions =
+      rawPermissions && typeof rawPermissions === "object" && !Array.isArray(rawPermissions)
+        ? rawPermissions
+        : {};
     Object.keys(permissions).forEach((key) => {
       const val = permissions[key];
       if (String(val).toLowerCase() === "unlimited") {
