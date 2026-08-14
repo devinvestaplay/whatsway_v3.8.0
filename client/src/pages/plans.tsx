@@ -169,7 +169,9 @@ export default function Plans() {
     enabled: !!user?.id,
   });
 
-  const availableCurrencies = currencyMapData?.data?.availableCurrencies || [];
+  const availableCurrencies = Array.isArray(currencyMapData?.data?.availableCurrencies)
+    ? currencyMapData.data.availableCurrencies
+    : [];
   const [selectedCurrency, setSelectedCurrency] = useState<string>("");
 
   // Filter currencies to only show those configured by admin, plus default/USD
@@ -219,8 +221,6 @@ export default function Plans() {
       name: p.subscription.planData?.name,
       status: p.subscription.status, // active / expired
     }));
-
-  console.log("userPlans in plans page:", purchasedPlans);
 
   const isSuper = user?.role === "superadmin";
 
@@ -346,7 +346,7 @@ export default function Plans() {
       const response = await apiRequest("GET", "/api/admin/plans");
       const data: PlansDataTypes = await response.json();
       if (data.success) {
-        setPlans(data.data);
+        setPlans(Array.isArray(data.data) ? data.data : []);
       }
     } catch (error) {
       console.error("Error fetching plans:", error);

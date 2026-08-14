@@ -127,11 +127,19 @@ export default function BillingSubscriptionPage({ embedded = false }: { embedded
     enabled: canUseTopups,
   });
 
-  const { data: workspaces = [] } = useQuery<any[]>({
+  const { data: workspacesData } = useQuery<any>({
     queryKey: ["/api/channels"],
     queryFn: () => apiRequest("GET", "/api/channels").then((res) => res.json()),
     enabled: canUseTopups,
   });
+  const workspaces = Array.isArray(workspacesData)
+    ? workspacesData
+    : Array.isArray(workspacesData?.data)
+      ? workspacesData.data
+      : Array.isArray(workspacesData?.channels)
+        ? workspacesData.channels
+        : [];
+  const topupOptions = Array.isArray(topupOptionsData?.rows) ? topupOptionsData.rows : [];
 
   useEffect(() => {
     if (!canUseTopups || topupReturnHandled || typeof window === "undefined") return;
@@ -260,7 +268,7 @@ export default function BillingSubscriptionPage({ embedded = false }: { embedded
                 <CreditCard className="h-5 w-5 text-green-700" />
               </div>
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {(topupOptionsData?.rows || []).map((option) => (
+                {topupOptions.map((option) => (
                   <div key={option.id} className="rounded-lg border border-gray-200 p-4">
                     <p className="text-sm font-semibold text-gray-500">{option.label}</p>
                     <p className="mt-2 text-2xl font-bold text-gray-900">
@@ -278,7 +286,7 @@ export default function BillingSubscriptionPage({ embedded = false }: { embedded
                     </Button>
                   </div>
                 ))}
-                {(topupOptionsData?.rows || []).length === 0 && (
+                {topupOptions.length === 0 && (
                   <div className="col-span-full rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500">
                     No active topup packages are available yet.
                   </div>
