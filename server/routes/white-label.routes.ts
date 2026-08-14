@@ -316,6 +316,46 @@ function currentClientId(req: Request) {
   return user.role === "team" && user.createdBy ? user.createdBy : user.id;
 }
 
+function scopedSuperadminId(req: Request) {
+  const user = (req.user || (req as any).session?.user) as any;
+  return user?.role === "superadmin" && user.createdBy ? user.id : null;
+}
+
+function appendClientScope(req: Request, clauses: string[], params: any[], alias = "u") {
+  const superadminId = scopedSuperadminId(req);
+  if (!superadminId) return;
+  params.push(superadminId);
+  clauses.push(`${alias}.created_by = $${params.length}`);
+}
+
+function appendWorkspaceScope(req: Request, clauses: string[], params: any[], alias = "c") {
+  const superadminId = scopedSuperadminId(req);
+  if (!superadminId) return;
+  params.push(superadminId);
+  clauses.push(`${workspaceOwnerExpression(alias)} IN (SELECT id FROM users WHERE role='admin' AND created_by = $${params.length})`);
+}
+
+async function canAccessClient(req: Request, clientId: string, db: { query: (text: string, params?: any[]) => Promise<any> } = pool) {
+  const superadminId = scopedSuperadminId(req);
+  if (!superadminId) return true;
+  const result = await db.query(`SELECT id FROM users WHERE id=$1 AND role='admin' AND created_by=$2 LIMIT 1`, [clientId, superadminId]);
+  return !!result.rows[0];
+}
+
+async function canAccessWorkspace(req: Request, workspaceId: string, db: { query: (text: string, params?: any[]) => Promise<any> } = pool) {
+  const superadminId = scopedSuperadminId(req);
+  if (!superadminId) return true;
+  const result = await db.query(
+    `SELECT c.id
+     FROM channels c
+     WHERE c.id=$1
+       AND ${workspaceOwnerExpression("c")} IN (SELECT id FROM users WHERE role='admin' AND created_by=$2)
+     LIMIT 1`,
+    [workspaceId, superadminId]
+  );
+  return !!result.rows[0];
+}
+
 function requestOrigin(req: Request) {
   const host = req.get("host");
   if (!host) return null;
@@ -390,6 +430,7 @@ function buildWorkspaceWhere(req: Request, params: any[]) {
     params.push(plan);
     clauses.push(`COALESCE(c.white_label_workspace_type,'free') = $${params.length}`);
   }
+  appendWorkspaceScope(req, clauses, params, "c");
   return clauses.join(" AND ");
 }
 
@@ -597,15 +638,24 @@ export function registerWhiteLabelRoutes(app: Express) {
     res.json(parsed);
   });
 
-  app.get(`${BASE}/summary`, ...guard, async (_req, res) => {
+  app.get(`${BASE}/summary`, ...guard, async (req, res) => {
+    const params: any[] = [];
+    const clientWhere = ["role='admin'"];
+    const workspaceWhere = ["1=1"];
+    appendClientScope(req, clientWhere, params, "users");
+    appendWorkspaceScope(req, workspaceWhere, params, "channels");
     const { rows } = await pool.query(`
       SELECT
-        (SELECT COUNT(*) FROM users WHERE role='admin')::int AS clients,
-        (SELECT COUNT(*) FROM channels)::int AS workspaces,
-        (SELECT COUNT(*) FROM channels WHERE COALESCE(is_active,true)=true)::int AS active_workspaces,
+        (SELECT COUNT(*) FROM users WHERE ${clientWhere.join(" AND ")})::int AS clients,
+        (SELECT COUNT(*) FROM channels WHERE ${workspaceWhere.join(" AND ")})::int AS workspaces,
+        (SELECT COUNT(*) FROM channels WHERE COALESCE(is_active,true)=true AND ${workspaceWhere.join(" AND ")})::int AS active_workspaces,
         (SELECT COUNT(*) FROM white_label_partners WHERE status='active')::int AS partners,
-        COALESCE((SELECT SUM(CASE WHEN transaction_type='debit' THEN -credits ELSE credits END) FROM white_label_credit_transactions),0)::numeric AS credit_balance
-    `);
+        COALESCE((SELECT SUM(CASE WHEN t.transaction_type='debit' THEN -t.credits ELSE t.credits END)
+          FROM white_label_credit_transactions t
+          JOIN users u ON u.id=t.client_id
+          WHERE ${clientWhere.map((clause) => clause.replaceAll("users.", "u.")).join(" AND ")}
+        ),0)::numeric AS credit_balance
+    `, params);
     res.json(rows[0]);
   });
 
@@ -623,6 +673,7 @@ export function registerWhiteLabelRoutes(app: Express) {
       params.push(status);
       clauses.push(`u.status = $${params.length}`);
     }
+    appendClientScope(req, clauses, params, "u");
     const where = clauses.join(" AND ");
     const total = await pool.query(`SELECT COUNT(*)::int AS count FROM users u WHERE ${where}`, params);
     params.push(limit, offset);
@@ -655,7 +706,10 @@ export function registerWhiteLabelRoutes(app: Express) {
     const session = (req as any).session;
     const current = session?.user;
     if (!current || current.role !== "superadmin") return res.status(403).json({ error: "Superadmin required" });
-    const target = await pool.query(`SELECT * FROM users WHERE id=$1 AND role='admin' LIMIT 1`, [req.params.id]);
+    const targetParams: any[] = [req.params.id];
+    const targetClauses = [`id=$1`, `role='admin'`];
+    appendClientScope(req, targetClauses, targetParams, "users");
+    const target = await pool.query(`SELECT * FROM users WHERE ${targetClauses.join(" AND ")} LIMIT 1`, targetParams);
     const client = target.rows[0];
     if (!client) return res.status(404).json({ error: "Client not found" });
     if ((client.status || "").toLowerCase() !== "active") return res.status(403).json({ error: "Client account is not active" });
@@ -690,11 +744,15 @@ export function registerWhiteLabelRoutes(app: Express) {
     const db = await pool.connect();
     try {
       await db.query("BEGIN");
-      const before = await db.query(`SELECT id, email, username, role FROM users WHERE id=$1 AND role='admin' FOR UPDATE`, [req.params.id]);
+      const before = await db.query(`SELECT id, email, username, role, created_by FROM users WHERE id=$1 AND role='admin' FOR UPDATE`, [req.params.id]);
       const client = before.rows[0];
       if (!client) {
         await db.query("ROLLBACK");
         return res.status(404).json({ error: "Client not found" });
+      }
+      if (!(await canAccessClient(req, req.params.id, db))) {
+        await db.query("ROLLBACK");
+        return res.status(403).json({ error: "Access denied to this client" });
       }
       const workspaces = await db.query(`SELECT id FROM channels c WHERE ${workspaceOwnerExpression()}=$1`, [req.params.id]);
       const workspaceIds = workspaces.rows.map((row) => row.id);
@@ -734,7 +792,10 @@ export function registerWhiteLabelRoutes(app: Express) {
     });
   });
 
-  app.get(`${BASE}/clients/export`, ...guard, async (_req, res) => {
+  app.get(`${BASE}/clients/export`, ...guard, async (req, res) => {
+    const params: any[] = [];
+    const clauses = ["u.role='admin'"];
+    appendClientScope(req, clauses, params, "u");
     const result = await pool.query(`
       SELECT u.id, u.public_client_id, u.username, u.email, u.first_name, u.last_name, u.status, u.created_at, u.updated_at,
         COUNT(DISTINCT c.id)::int AS workspaces,
@@ -744,9 +805,9 @@ export function registerWhiteLabelRoutes(app: Express) {
       LEFT JOIN channels c ON ${workspaceOwnerExpression()} = u.id
       LEFT JOIN contacts ct ON ct.channel_id = c.id
       LEFT JOIN users tm ON tm.created_by = u.id AND tm.role <> 'admin' AND tm.role <> 'superadmin'
-      WHERE u.role='admin'
+      WHERE ${clauses.join(" AND ")}
       GROUP BY u.id
-      ORDER BY u.created_at DESC LIMIT 5000`);
+      ORDER BY u.created_at DESC LIMIT 5000`, params);
     await sendWorkbook(res, "white-label-clients.xlsx", "Clients", [
       { header: "Client ID", key: "public_client_id", width: 12 }, { header: "Internal ID", key: "id", width: 38 }, { header: "Username", key: "username", width: 24 }, { header: "Email", key: "email", width: 32 },
       { header: "First Name", key: "first_name", width: 18 }, { header: "Last Name", key: "last_name", width: 18 }, { header: "Status", key: "status", width: 14 },
@@ -795,6 +856,7 @@ export function registerWhiteLabelRoutes(app: Express) {
     const parsed = schema.parse(req.body);
     const before = await pool.query(`SELECT * FROM channels WHERE id=$1`, [req.params.id]);
     if (!before.rows[0]) return res.status(404).json({ error: "Workspace not found" });
+    if (!(await canAccessWorkspace(req, req.params.id))) return res.status(403).json({ error: "Access denied to this workspace" });
     const updated = await pool.query(
       `UPDATE channels SET is_active=COALESCE($2,is_active), white_label_auto_renew=COALESCE($3,white_label_auto_renew),
        white_label_workspace_type=COALESCE($4,white_label_workspace_type), white_label_end_date=$5,
@@ -819,6 +881,10 @@ export function registerWhiteLabelRoutes(app: Express) {
       if (!row.owner_id) {
         await db.query("ROLLBACK");
         return res.status(400).json({ error: "Workspace has no client owner" });
+      }
+      if (!(await canAccessWorkspace(req, req.params.id, db))) {
+        await db.query("ROLLBACK");
+        return res.status(403).json({ error: "Access denied to this workspace" });
       }
       const before = Number(row.white_label_points || 0);
       const signed = parsed.transactionType === "debit" ? -parsed.credits : parsed.credits;
@@ -853,6 +919,10 @@ export function registerWhiteLabelRoutes(app: Express) {
         await db.query("ROLLBACK");
         return res.status(404).json({ error: "Workspace not found" });
       }
+      if (!(await canAccessWorkspace(req, req.params.id, db))) {
+        await db.query("ROLLBACK");
+        return res.status(403).json({ error: "Access denied to this workspace" });
+      }
       await db.query(`DELETE FROM white_label_workspace_addons WHERE workspace_id=$1`, [req.params.id]);
       await db.query(`DELETE FROM white_label_credit_transactions WHERE workspace_id=$1`, [req.params.id]);
       await db.query(`DELETE FROM white_label_topup_payments WHERE workspace_id=$1`, [req.params.id]);
@@ -868,7 +938,10 @@ export function registerWhiteLabelRoutes(app: Express) {
     }
   });
 
-  app.get(`${BASE}/workspaces/export`, ...guard, async (_req, res) => {
+  app.get(`${BASE}/workspaces/export`, ...guard, async (req, res) => {
+    const params: any[] = [];
+    const clauses = ["1=1"];
+    appendWorkspaceScope(req, clauses, params, "c");
     const result = await pool.query(`
       SELECT c.id, c.name, c.phone_number, c.is_active, COALESCE(c.white_label_workspace_type,'free') AS plan,
         COALESCE(c.white_label_points,0)::numeric AS points, COALESCE(c.white_label_auto_renew,false) AS auto_renew,
@@ -879,8 +952,9 @@ export function registerWhiteLabelRoutes(app: Express) {
       LEFT JOIN contacts ct ON ct.channel_id = c.id
       LEFT JOIN users tm ON tm.created_by = u.id AND tm.role <> 'admin' AND tm.role <> 'superadmin'
       LEFT JOIN white_label_workspace_addons wa ON wa.workspace_id = c.id AND wa.status='active'
+      WHERE ${clauses.join(" AND ")}
       GROUP BY c.id, u.id
-      ORDER BY c.created_at DESC LIMIT 5000`);
+      ORDER BY c.created_at DESC LIMIT 5000`, params);
     await sendWorkbook(res, "white-label-workspaces.xlsx", "Workspaces", [
       { header: "ID", key: "id", width: 38 }, { header: "Name", key: "name", width: 28 }, { header: "Phone", key: "phone_number", width: 18 },
       { header: "Owner", key: "owner_email", width: 32 }, { header: "Active", key: "is_active", width: 10 }, { header: "Plan", key: "plan", width: 14 },
@@ -908,6 +982,11 @@ export function registerWhiteLabelRoutes(app: Express) {
       params.push(`%${search}%`);
       clauses.push(`(t.transaction_type ILIKE $${params.length} OR t.reference ILIKE $${params.length} OR t.note ILIKE $${params.length})`);
     }
+    const superadminId = scopedSuperadminId(req);
+    if (superadminId) {
+      params.push(superadminId);
+      clauses.push(`u.created_by=$${params.length}`);
+    }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     params.push(limit, offset);
     const result = await pool.query(`
@@ -917,12 +996,21 @@ export function registerWhiteLabelRoutes(app: Express) {
       LEFT JOIN channels c ON c.id=t.workspace_id
       ${where}
       ORDER BY t.created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
-    const total = await pool.query(`SELECT COUNT(*)::int AS count FROM white_label_credit_transactions t ${where}`, params.slice(0, -2));
+    const total = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM white_label_credit_transactions t LEFT JOIN users u ON u.id=t.client_id ${where}`,
+      params.slice(0, -2)
+    );
     res.json({ rows: result.rows, total: total.rows[0].count, page, limit });
   });
 
   app.post(`${BASE}/credits`, ...guard, async (req, res) => {
     const parsed = creditSchema.parse(req.body);
+    if (!(await canAccessClient(req, parsed.clientId))) {
+      return res.status(403).json({ error: "Access denied to this client" });
+    }
+    if (parsed.workspaceId && !(await canAccessWorkspace(req, parsed.workspaceId))) {
+      return res.status(403).json({ error: "Access denied to this workspace" });
+    }
     const db = await pool.connect();
     try {
       await db.query("BEGIN");

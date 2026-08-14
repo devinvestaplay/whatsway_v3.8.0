@@ -26,23 +26,90 @@ import ExcelJS from "exceljs";
 import archiver from 'archiver';
 import { storage } from 'server/storage';
 
+async function channelScopeForUser(user: any, requestedChannelId?: string) {
+  if (!user) return [];
+  if (user.role === "platform_admin") return requestedChannelId ? [requestedChannelId] : null;
+
+  if (user.role === "superadmin") {
+    const scopedChannels = await dbRead
+      .select({ id: channels.id })
+      .from(channels)
+      .where(sql`COALESCE(${channels.whiteLabelClientId}, NULLIF(${channels.createdBy},'')) IN (
+        SELECT id FROM users WHERE role = 'admin' AND created_by = ${user.id}
+      )`);
+    const ids = scopedChannels.map((channel) => channel.id);
+    if (requestedChannelId && !ids.includes(requestedChannelId)) {
+      throw new AppError(403, "Access denied to this channel");
+    }
+    return requestedChannelId ? [requestedChannelId] : ids;
+  }
+
+  const ownerId = user.role === "team" ? user.createdBy : user.id;
+  if (!ownerId) return [];
+  const ownedChannels = await dbRead
+    .select({ id: channels.id })
+    .from(channels)
+    .where(eq(channels.createdBy, ownerId));
+  const ids = ownedChannels.map((channel) => channel.id);
+  if (requestedChannelId && !ids.includes(requestedChannelId)) {
+    throw new AppError(403, "Access denied to this channel");
+  }
+  return requestedChannelId ? [requestedChannelId] : ids;
+}
+
+function emptyMessageAnalytics(start: Date, end: Date, days: number) {
+  return {
+    dailyStats: [],
+    overall: {
+      totalMessages: 0,
+      totalOutbound: 0,
+      totalInbound: 0,
+      totalDelivered: 0,
+      totalRead: 0,
+      totalFailed: 0,
+      totalReplied: 0,
+      uniqueContacts: 0,
+    },
+    messageTypes: [],
+    hourlyDistribution: [],
+    avgResponseTime: null,
+    period: {
+      startDate: start.toISOString(),
+      endDate: end.toISOString(),
+      days,
+    },
+  };
+}
+
 
 // Get message analytics with real-time data
 export const getMessageAnalytics = asyncHandler(async (req: Request, res: Response) => {
   const { channelId, days = '30', startDate, endDate } = req.query;
+  const user = (req.session as any)?.user || (req as any).user;
   
   const daysNum = parseInt(days as string, 10);
   const start = startDate ? new Date(startDate as string) : new Date(Date.now() - daysNum * 24 * 60 * 60 * 1000);
   const end = endDate ? new Date(endDate as string) : new Date();
 
   const conditions = [];
-  
-  if (channelId) {
-    conditions.push(eq(conversations.channelId, channelId as string));
+
+  const scopedChannelIds = await channelScopeForUser(user, channelId as string | undefined);
+  if (Array.isArray(scopedChannelIds)) {
+    if (scopedChannelIds.length === 0) {
+      return res.json(emptyMessageAnalytics(start, end, daysNum));
+    }
+    conditions.push(inArray(conversations.channelId, scopedChannelIds));
   }
   
   conditions.push(gte(messages.createdAt, start));
   conditions.push(lte(messages.createdAt, end));
+
+  const conversationScopeSql = Array.isArray(scopedChannelIds)
+    ? sql`WHERE channel_id = ANY(${scopedChannelIds}::varchar[])`
+    : sql``;
+  const responseScopeSql = Array.isArray(scopedChannelIds)
+    ? sql`AND c.channel_id = ANY(${scopedChannelIds}::varchar[])`
+    : sql``;
 
   // Get daily message statistics (outbound only for rate charts)
   const messageStats = await dbRead
@@ -84,7 +151,7 @@ export const getMessageAnalytics = asyncHandler(async (req: Request, res: Respon
           )
           AND inb.conversation_id IN (
             SELECT id FROM conversations
-            ${channelId ? sql`WHERE channel_id = ${channelId as string}` : sql``}
+            ${conversationScopeSql}
           )
       )`,
       uniqueContacts: sql<number>`COUNT(DISTINCT ${conversations.contactPhone})`,
@@ -116,7 +183,7 @@ export const getMessageAnalytics = asyncHandler(async (req: Request, res: Respon
           LIMIT 1
         ) first_reply
         WHERE outb.direction = 'outbound'
-          ${channelId ? sql`AND c.channel_id = ${channelId as string}` : sql``}
+          ${responseScopeSql}
           AND outb.created_at >= ${start}
           AND outb.created_at <= ${end}
           AND EXTRACT(EPOCH FROM (first_reply.created_at - outb.created_at)) BETWEEN 0 AND 86400
@@ -263,10 +330,28 @@ export const getMessageAnalytics = asyncHandler(async (req: Request, res: Respon
 
 export const getCampaignAnalytics = asyncHandler(async (req: Request, res: Response) => {
   const { channelId } = req.query;
+  const user = (req.session as any)?.user || (req as any).user;
 
   const conditions = [];
-  if (channelId) {
-    conditions.push(eq(campaigns.channelId, channelId as string));
+  const scopedChannelIds = await channelScopeForUser(user, channelId as string | undefined);
+  if (Array.isArray(scopedChannelIds)) {
+    if (scopedChannelIds.length === 0) {
+      return res.json({
+        campaigns: [],
+        summary: {
+          totalCampaigns: 0,
+          activeCampaigns: 0,
+          completedCampaigns: 0,
+          totalRecipients: 0,
+          totalSent: 0,
+          totalDelivered: 0,
+          totalRead: 0,
+          totalReplied: 0,
+          totalFailed: 0,
+        },
+      });
+    }
+    conditions.push(inArray(campaigns.channelId, scopedChannelIds));
   }
 
   const campaignStats = await dbRead

@@ -110,6 +110,7 @@ export const getAllUsers = async (req: Request, res: Response) => {
     const hasChannels = (req.query.hasChannels as string) || "";
     const dateRange = (req.query.dateRange as string) || "";
     const offset = (page - 1) * limit;
+    const caller = (req.user || (req as any).session?.user) as any;
 
     const conditions: any[] = [
       eq(users.role, role),
@@ -119,6 +120,10 @@ export const getAllUsers = async (req: Request, res: Response) => {
       ) : undefined,
       status ? eq(users.status, status) : undefined,
     ].filter(Boolean);
+
+    if (caller?.role === "superadmin" && role === "admin") {
+      conditions.push(eq(users.createdBy, caller.id));
+    }
 
     if (dateRange === "week") {
       conditions.push(gte(users.createdAt, sql`NOW() - INTERVAL '7 days'`));
@@ -196,6 +201,7 @@ export const exportAllUsers = async (req: Request, res: Response) => {
     const statusFilter = (req.query.status as string) || "";
     const hasChannels = (req.query.hasChannels as string) || "";
     const dateRange = (req.query.dateRange as string) || "";
+    const caller = (req.user || (req as any).session?.user) as any;
 
     const conditions: any[] = [
       eq(users.role, role),
@@ -205,6 +211,10 @@ export const exportAllUsers = async (req: Request, res: Response) => {
       ) : undefined,
       statusFilter ? eq(users.status, statusFilter) : undefined,
     ].filter(Boolean);
+
+    if (caller?.role === "superadmin" && role === "admin") {
+      conditions.push(eq(users.createdBy, caller.id));
+    }
 
     if (dateRange === "week") {
       conditions.push(gte(users.createdAt, sql`NOW() - INTERVAL '7 days'`));

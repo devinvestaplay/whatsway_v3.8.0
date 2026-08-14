@@ -668,9 +668,22 @@ router.get("/activity-logs", requireAuth, async (req, res) => {
       .from(userActivityLogs)
       .leftJoin(users, eq(userActivityLogs.userId, users.id));
 
-    const filteredQuery = role !== "superadmin"
-      ? baseQuery.where(eq(users.createdBy, loggedInUserId))
-      : baseQuery;
+    const filteredQuery =
+      role === "platform_admin"
+        ? baseQuery
+        : role === "superadmin"
+          ? baseQuery.where(
+              or(
+                eq(userActivityLogs.userId, loggedInUserId),
+                eq(users.createdBy, loggedInUserId),
+              )
+            )
+          : baseQuery.where(
+              or(
+                eq(userActivityLogs.userId, loggedInUserId),
+                eq(users.createdBy, loggedInUserId),
+              )
+            );
 
     const logs = await filteredQuery.orderBy(desc(userActivityLogs.createdAt)).limit(100);
 
