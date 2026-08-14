@@ -282,13 +282,19 @@ function toSettings(row: any) {
   };
 }
 
-async function ensureSettings() {
-  const existing = await pool.query(`SELECT * FROM white_label_settings WHERE singleton_key = 'default' LIMIT 1`);
+function settingsKey(req?: Request) {
+  const superadminId = req ? scopedSuperadminId(req) : null;
+  return superadminId ? `superadmin:${superadminId}` : "default";
+}
+
+async function ensureSettings(req?: Request) {
+  const key = settingsKey(req);
+  const existing = await pool.query(`SELECT * FROM white_label_settings WHERE singleton_key = $1 LIMIT 1`, [key]);
   if (existing.rows[0]) return existing.rows[0];
   const inserted = await pool.query(
     `INSERT INTO white_label_settings (singleton_key, platform_name, brand_tagline, support_email, primary_color, secondary_color, accent_color, email_from_name)
-     VALUES ('default',$1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-    [settingsDefaults.platform_name, settingsDefaults.brand_tagline, settingsDefaults.support_email, settingsDefaults.primary_color, settingsDefaults.secondary_color, settingsDefaults.accent_color, settingsDefaults.email_from_name]
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+    [key, settingsDefaults.platform_name, settingsDefaults.brand_tagline, settingsDefaults.support_email, settingsDefaults.primary_color, settingsDefaults.secondary_color, settingsDefaults.accent_color, settingsDefaults.email_from_name]
   );
   return inserted.rows[0];
 }
@@ -561,14 +567,14 @@ export function registerWhiteLabelRoutes(app: Express) {
     }
   });
 
-  app.get(`${BASE}/settings`, ...guard, async (_req, res) => {
-    const row = await ensureSettings();
+  app.get(`${BASE}/settings`, ...guard, async (req, res) => {
+    const row = await ensureSettings(req);
     res.json(toSettings(row));
   });
 
   app.put(`${BASE}/settings`, ...guard, async (req, res) => {
     const parsed = settingsSchema.parse(req.body);
-    const before = await ensureSettings();
+    const before = await ensureSettings(req);
     const values = {
       platform_name: parsed.platformName,
       brand_tagline: parsed.brandTagline || "",
@@ -593,28 +599,28 @@ export function registerWhiteLabelRoutes(app: Express) {
       `UPDATE white_label_settings SET platform_name=$1, brand_tagline=$2, support_email=$3, support_phone=$4, primary_color=$5,
        secondary_color=$6, accent_color=$7, main_logo=$8, dark_mode_logo=$9, favicon=$10, login_banner=$11, footer_text=$12,
        custom_domain=$13, email_from_name=$14, email_from_address=$15, hide_powered_by=$16, allow_partner_signup=$17,
-       maintenance_mode=$18, updated_by=$19, updated_at=NOW() WHERE singleton_key='default' RETURNING *`,
-      [...Object.values(values), actorId(req)]
+       maintenance_mode=$18, updated_by=$19, updated_at=NOW() WHERE singleton_key=$20 RETURNING *`,
+      [...Object.values(values), actorId(req), settingsKey(req)]
     );
     await audit(req, "settings.update", "white_label_settings", updated.rows[0].id, before, updated.rows[0]);
     res.json(toSettings(updated.rows[0]));
   });
 
   app.post(`${BASE}/settings/reset`, ...guard, async (req, res) => {
-    const before = await ensureSettings();
+    const before = await ensureSettings(req);
     const updated = await pool.query(
       `UPDATE white_label_settings SET platform_name=$1, brand_tagline=$2, support_email=$3, support_phone=$4,
        primary_color=$5, secondary_color=$6, accent_color=$7, main_logo='', dark_mode_logo='', favicon='', login_banner='', footer_text='',
        custom_domain='', email_from_name=$8, email_from_address='', hide_powered_by=false, allow_partner_signup=false, maintenance_mode=false,
-       updated_by=$9, updated_at=NOW() WHERE singleton_key='default' RETURNING *`,
-      [settingsDefaults.platform_name, settingsDefaults.brand_tagline, settingsDefaults.support_email, settingsDefaults.support_phone, settingsDefaults.primary_color, settingsDefaults.secondary_color, settingsDefaults.accent_color, settingsDefaults.email_from_name, actorId(req)]
+       updated_by=$9, updated_at=NOW() WHERE singleton_key=$10 RETURNING *`,
+      [settingsDefaults.platform_name, settingsDefaults.brand_tagline, settingsDefaults.support_email, settingsDefaults.support_phone, settingsDefaults.primary_color, settingsDefaults.secondary_color, settingsDefaults.accent_color, settingsDefaults.email_from_name, actorId(req), settingsKey(req)]
     );
     await audit(req, "settings.reset", "white_label_settings", updated.rows[0].id, before, updated.rows[0]);
     res.json(toSettings(updated.rows[0]));
   });
 
-  app.get(`${BASE}/partner-settings`, ...guard, async (_req, res) => {
-    const row = await ensureSettings();
+  app.get(`${BASE}/partner-settings`, ...guard, async (req, res) => {
+    const row = await ensureSettings(req);
     const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata : {};
     res.json({
       ...partnerSettingsDefaults,
@@ -624,15 +630,15 @@ export function registerWhiteLabelRoutes(app: Express) {
 
   app.put(`${BASE}/partner-settings`, ...guard, async (req, res) => {
     const parsed = partnerSettingsSchema.parse(req.body);
-    const before = await ensureSettings();
+    const before = await ensureSettings(req);
     const metadata = before.metadata && typeof before.metadata === "object" ? before.metadata : {};
     const nextMetadata = {
       ...metadata,
       partnerSettings: parsed,
     };
     const updated = await pool.query(
-      `UPDATE white_label_settings SET metadata=$1, updated_by=$2, updated_at=NOW() WHERE singleton_key='default' RETURNING *`,
-      [JSON.stringify(nextMetadata), actorId(req)]
+      `UPDATE white_label_settings SET metadata=$1, updated_by=$2, updated_at=NOW() WHERE singleton_key=$3 RETURNING *`,
+      [JSON.stringify(nextMetadata), actorId(req), settingsKey(req)]
     );
     await audit(req, "partner_settings.update", "white_label_settings", updated.rows[0].id, (metadata as any).partnerSettings || null, parsed);
     res.json(parsed);

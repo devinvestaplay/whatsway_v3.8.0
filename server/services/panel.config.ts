@@ -18,7 +18,7 @@
 import { NewPanelConfig, panelConfig } from "@shared/schema";
 import { diployLogger, HTTP_STATUS, DIPLOY_BRAND } from "@diploy/core";
 import { db } from "../db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, isNull } from "drizzle-orm";
 import { cacheGet, cacheInvalidate, CACHE_KEYS, CACHE_TTL } from './cache';
 
 export const createPanelConfig = async (data: NewPanelConfig) => {
@@ -70,32 +70,54 @@ export const deletePanelConfig = async (id: string) => {
 };
 
 // Helper functions for brand settings compatibility
-export const getFirstPanelConfig = async () => {
-  const result = await db.select().from(panelConfig).orderBy(desc(panelConfig.createdAt)).limit(1);
+export const getFirstPanelConfig = async (tenantDomainId?: string | null) => {
+  if (tenantDomainId) {
+    const tenantResult = await db
+      .select()
+      .from(panelConfig)
+      .where(eq(panelConfig.tenantDomainId, tenantDomainId))
+      .orderBy(desc(panelConfig.createdAt))
+      .limit(1);
+    return tenantResult[0] || null;
+  }
+
+  const result = await db
+    .select()
+    .from(panelConfig)
+    .where(isNull(panelConfig.tenantDomainId))
+    .orderBy(desc(panelConfig.createdAt))
+    .limit(1);
   return result[0] || null;
 };
 
-export const updateFirstPanelConfig = async (data: Partial<NewPanelConfig>) => {
-  // Try to get the first config
-  const existingConfig = await getFirstPanelConfig();
+export const updateFirstPanelConfig = async (
+  data: Partial<NewPanelConfig>,
+  tenantDomainId?: string | null,
+  ownerSuperadminId?: string | null
+) => {
+  const existingConfig = await getFirstPanelConfig(tenantDomainId);
   
-  if (existingConfig) {
-    // Update existing config
+  if (existingConfig && (!tenantDomainId || existingConfig.tenantDomainId === tenantDomainId)) {
     return updatePanelConfig(existingConfig.id, data);
-  } else {
-    // Create new config if none exists
-    const newConfigData: NewPanelConfig = {
-      name: data.name || "Your App Name",
-      tagline: data.tagline || "",
-      description: data.description || "",
-      companyName: data.companyName || "",
-      companyWebsite: data.companyWebsite || "",
-      supportEmail: data.supportEmail || "",
-      defaultLanguage: data.defaultLanguage || "en",
-      supportedLanguages: data.supportedLanguages || ["en"],
-      logo: data.logo,
-      favicon: data.favicon,
-    };
-    return createPanelConfig(newConfigData);
   }
+
+  const newConfigData: NewPanelConfig = {
+    name: data.name || "Your App Name",
+    tagline: data.tagline ?? "",
+    description: data.description ?? "",
+    companyName: data.companyName ?? "",
+    companyWebsite: data.companyWebsite ?? "",
+    supportEmail: data.supportEmail ?? "",
+    defaultLanguage: data.defaultLanguage || "en",
+    supportedLanguages: data.supportedLanguages || ["en"],
+    logo: data.logo,
+    logo2: data.logo2,
+    favicon: data.favicon,
+    currency: data.currency ?? "INR",
+    country: data.country ?? "IN",
+    appearanceConfig: data.appearanceConfig ?? {},
+    tenantDomainId: tenantDomainId || null,
+    ownerSuperadminId: ownerSuperadminId || null,
+  };
+  return createPanelConfig(newConfigData);
 };

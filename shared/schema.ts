@@ -1750,6 +1750,8 @@ export const whiteLabelAuditLogs = pgTable("white_label_audit_logs", {
 
 export const marketingCmsLogos = pgTable("marketing_cms_logos", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantDomainId: varchar("tenant_domain_id").references((): any => whiteLabelDomains.id, { onDelete: "cascade" }),
+  ownerSuperadminId: varchar("owner_superadmin_id").references((): any => users.id, { onDelete: "cascade" }),
   name: varchar("name", { length: 160 }).notNull(),
   logoUrl: text("logo_url").notNull(),
   placement: varchar("placement", { length: 80 }).notNull().default("founders"),
@@ -1825,6 +1827,8 @@ export const panelConfig = pgTable("panel_config", {
   id: varchar("id")
     .primaryKey()
     .default(sql`gen_random_uuid()`),
+  tenantDomainId: varchar("tenant_domain_id").references((): any => whiteLabelDomains.id, { onDelete: "cascade" }),
+  ownerSuperadminId: varchar("owner_superadmin_id").references((): any => users.id, { onDelete: "cascade" }),
   name: varchar("name").notNull(),
   tagline: varchar("tagline"),
   description: text("description"),

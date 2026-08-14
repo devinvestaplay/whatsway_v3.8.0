@@ -1072,6 +1072,34 @@ const steps: MigrationStep[] = [
   },
 
   {
+    description: "Add tenant scope to brand and marketing CMS tables",
+    sql: `
+      ALTER TABLE panel_config ADD COLUMN IF NOT EXISTS tenant_domain_id VARCHAR REFERENCES white_label_domains(id) ON DELETE CASCADE;
+      ALTER TABLE panel_config ADD COLUMN IF NOT EXISTS owner_superadmin_id VARCHAR REFERENCES users(id) ON DELETE CASCADE;
+      CREATE INDEX IF NOT EXISTS panel_config_tenant_idx ON panel_config(tenant_domain_id);
+
+      ALTER TABLE marketing_cms_logos ADD COLUMN IF NOT EXISTS tenant_domain_id VARCHAR REFERENCES white_label_domains(id) ON DELETE CASCADE;
+      ALTER TABLE marketing_cms_logos ADD COLUMN IF NOT EXISTS owner_superadmin_id VARCHAR REFERENCES users(id) ON DELETE CASCADE;
+      CREATE INDEX IF NOT EXISTS marketing_cms_logos_tenant_idx ON marketing_cms_logos(tenant_domain_id);
+
+      ALTER TABLE marketing_cms_entries ADD COLUMN IF NOT EXISTS tenant_domain_id VARCHAR REFERENCES white_label_domains(id) ON DELETE CASCADE;
+      ALTER TABLE marketing_cms_entries ADD COLUMN IF NOT EXISTS owner_superadmin_id VARCHAR REFERENCES users(id) ON DELETE CASCADE;
+      CREATE INDEX IF NOT EXISTS marketing_cms_entries_tenant_idx ON marketing_cms_entries(tenant_domain_id);
+
+      ALTER TABLE marketing_cms_settings ADD COLUMN IF NOT EXISTS id VARCHAR DEFAULT (gen_random_uuid())::text;
+      UPDATE marketing_cms_settings SET id = (gen_random_uuid())::text WHERE id IS NULL;
+      ALTER TABLE marketing_cms_settings ADD COLUMN IF NOT EXISTS tenant_domain_id VARCHAR REFERENCES white_label_domains(id) ON DELETE CASCADE;
+      ALTER TABLE marketing_cms_settings ADD COLUMN IF NOT EXISTS owner_superadmin_id VARCHAR REFERENCES users(id) ON DELETE CASCADE;
+      ALTER TABLE marketing_cms_settings DROP CONSTRAINT IF EXISTS marketing_cms_settings_pkey;
+      ALTER TABLE marketing_cms_settings ALTER COLUMN id SET NOT NULL;
+      ALTER TABLE marketing_cms_settings ADD CONSTRAINT marketing_cms_settings_pkey PRIMARY KEY (id);
+      CREATE UNIQUE INDEX IF NOT EXISTS marketing_cms_settings_key_tenant_unique
+        ON marketing_cms_settings(key, COALESCE(tenant_domain_id, ''));
+      CREATE INDEX IF NOT EXISTS marketing_cms_settings_tenant_idx ON marketing_cms_settings(tenant_domain_id);
+    `,
+  },
+
+  {
     description:
       "Convert all naive timestamp columns to timestamptz (interpret existing values as UTC)",
     sql: `

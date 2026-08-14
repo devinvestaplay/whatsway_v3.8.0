@@ -29,6 +29,7 @@ import {
 import { z } from "zod";
 import path from "path";
 import fs from "fs";
+import { resolveTenantFromRequest } from "../services/tenant-domain.service";
 
 export const panelConfigSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -81,6 +82,14 @@ const resolveAssetUrl = (value: string | null | undefined): string => {
   if (!value) return "";
   if (value.startsWith("https://") || value.startsWith("/")) return value;
   return `/uploads/${value}`;
+};
+
+const getBrandTenantScope = async (req: Request) => {
+  const tenant = await resolveTenantFromRequest(req);
+  return {
+    tenantDomainId: tenant?.domainId || null,
+    ownerSuperadminId: tenant?.superadminId || null,
+  };
 };
 
 // Helper function to process base64 images
@@ -268,9 +277,10 @@ export const remove = async (req: Request, res: Response) => {
 };
 
 // Brand Settings endpoints (for frontend compatibility)
-export const getBrandSettings = async (_req: Request, res: Response) => {
+export const getBrandSettings = async (req: Request, res: Response) => {
   try {
-    const config = await getFirstPanelConfig();
+    const scope = await getBrandTenantScope(req);
+    const config = await getFirstPanelConfig(scope.tenantDomainId);
 
     if (!config) {
       // Return default settings if no config exists
@@ -373,6 +383,7 @@ export const createBrandSettings = async (req: Request, res: Response) => {
     }
 
     // ✅ Transform brand settings to panel config format
+    const scope = await getBrandTenantScope(req);
     const panelData = {
       name: parsed.title,
       tagline: parsed.tagline || "",
@@ -393,10 +404,14 @@ export const createBrandSettings = async (req: Request, res: Response) => {
         fontFamily: parsed.fontFamily,
         buttonColor: parsed.buttonColor,
         lightModeColor: parsed.lightModeColor,
-      }
+      },
+      tenantDomainId: scope.tenantDomainId,
+      ownerSuperadminId: scope.ownerSuperadminId,
     };
 
-    const config = await createPanelConfig(panelData);
+    const config = scope.tenantDomainId
+      ? await updateFirstPanelConfig(panelData, scope.tenantDomainId, scope.ownerSuperadminId)
+      : await createPanelConfig(panelData);
 
     const brandSettings = {
       title: config.name || parsed.title,
@@ -464,7 +479,8 @@ export const updateBrandSettingsOld = async (req: Request, res: Response) => {
       currency: parsed.currency || "",
     };
 
-    const config = await updateFirstPanelConfig(panelData);
+    const scope = await getBrandTenantScope(req);
+    const config = await updateFirstPanelConfig(panelData, scope.tenantDomainId, scope.ownerSuperadminId);
 
     const brandSettings = {
       title: config.name || parsed.title,
@@ -534,7 +550,8 @@ export const updateBrandSettings = async (req: Request, res: Response) => {
     // =============================
     // ✅ 4. Panel Config Update
     // =============================
-    const existingConfig = await getFirstPanelConfig();
+    const scope = await getBrandTenantScope(req);
+    const existingConfig = await getFirstPanelConfig(scope.tenantDomainId);
     const currentAppearance = existingConfig?.appearanceConfig || {};
 
     const panelData = {
@@ -556,7 +573,7 @@ export const updateBrandSettings = async (req: Request, res: Response) => {
       }
     };
 
-    const config = await updateFirstPanelConfig(panelData);
+    const config = await updateFirstPanelConfig(panelData, scope.tenantDomainId, scope.ownerSuperadminId);
 
     // =============================
     // ✅ 5. Response (Frontend format)
