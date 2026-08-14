@@ -2,7 +2,7 @@ import { and, eq, or, sql } from "drizzle-orm";
 import { db, pool } from "../db";
 import { channels, users, type Channel, type User } from "@shared/schema";
 
-type ClientIdentity = Pick<User, "id" | "username" | "email" | "firstName" | "lastName">;
+type ClientIdentity = Pick<User, "id" | "username" | "email" | "firstName" | "lastName" | "createdBy">;
 
 function workspaceNameForClient(client: ClientIdentity) {
   const fullName = [client.firstName, client.lastName].filter(Boolean).join(" ").trim();
@@ -80,6 +80,28 @@ export async function createWorkspaceForClient(params: {
     const error: any = new Error("Client not found");
     error.statusCode = 404;
     throw error;
+  }
+
+  if (client.createdBy) {
+    const limit = await pool.query(
+      `SELECT workspace_limit FROM platform_superadmin_controls WHERE superadmin_id=$1 AND workspace_limit IS NOT NULL`,
+      [client.createdBy]
+    );
+    const workspaceLimit = limit.rows[0]?.workspace_limit;
+    if (workspaceLimit !== undefined && workspaceLimit !== null) {
+      const current = await pool.query(
+        `SELECT COUNT(*)::int AS count
+         FROM channels c
+         JOIN users owner ON owner.id = COALESCE(c.white_label_client_id, c.created_by)
+         WHERE owner.role='admin' AND owner.created_by=$1`,
+        [client.createdBy]
+      );
+      if (Number(current.rows[0]?.count || 0) >= Number(workspaceLimit)) {
+        const error: any = new Error("Partner workspace limit reached. Contact the platform admin to increase the limit.");
+        error.statusCode = 403;
+        throw error;
+      }
+    }
   }
 
   if (params.setActive !== false) {

@@ -17,7 +17,7 @@
 
 import { Request, Response } from "express";
 import { DiployError, asyncHandler as _dHandler, diployLogger, HTTP_STATUS } from "@diploy/core";
-import { db } from "../db";
+import { db, pool } from "../db";
 import {users, channels} from "@shared/schema";
 import { eq, or, like, sql, and, desc, gte, inArray, gt } from "drizzle-orm";
 import bcrypt from "bcryptjs";
@@ -52,6 +52,32 @@ const updateUserStatusSchema = z
     status: z.enum(["active", "inactive"]),
   })
   .strict();
+
+async function enforceSuperadminClientLimit(superadminId?: string | null) {
+  if (!superadminId) return;
+
+  const limitResult = await pool.query(
+    `SELECT client_limit FROM platform_superadmin_controls WHERE superadmin_id=$1 LIMIT 1`,
+    [superadminId]
+  );
+  const clientLimit = limitResult.rows[0]?.client_limit;
+  if (clientLimit === null || clientLimit === undefined) return;
+
+  const countResult = await pool.query(
+    `SELECT COUNT(*)::int AS count
+     FROM users
+     WHERE role='admin'
+       AND created_by=$1
+       AND COALESCE(status, '') <> 'deleted'`,
+    [superadminId]
+  );
+
+  if ((countResult.rows[0]?.count || 0) >= Number(clientLimit)) {
+    const error = new Error("Partner client limit reached. Contact the platform admin to increase the limit.");
+    (error as any).statusCode = 403;
+    throw error;
+  }
+}
 
 
 // Default permissions 
@@ -451,6 +477,7 @@ export const createUser = async (req: Request, res: Response) => {
 
     // 3️⃣ Create new user
     const tenant = await resolveTenantFromRequest(req);
+    await enforceSuperadminClientLimit(tenant?.superadminId || null);
     const hashedPassword = await bcrypt.hash(password, 10);
     const assignedRole = role || "admin";
     const publicClientId = shouldAssignPublicClientId(assignedRole)
@@ -505,9 +532,10 @@ export const createUser = async (req: Request, res: Response) => {
 
   } catch (error) {
     console.error("Error creating user:", error);
-    return res.status(500).json({
+    const statusCode = (error as any)?.statusCode || 500;
+    return res.status(statusCode).json({
       success: false,
-      message: "Error creating user. Please try again.",
+      message: (error as Error)?.message || "Error creating user. Please try again.",
     });
   }
 };
@@ -664,9 +692,10 @@ export const createUserOld = async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("Error creating user:", error);
-    return res.status(500).json({
+    const statusCode = (error as any)?.statusCode || 500;
+    return res.status(statusCode).json({
       success: false,
-      message: "Error creating user",
+      message: (error as Error)?.message || "Error creating user",
       error,
     });
   }
@@ -924,6 +953,10 @@ export const createUserSuperadmin = async (req: Request, res: Response) => {
         : caller?.role === "superadmin"
           ? caller.id
           : null;
+
+    if (requestedRole === "admin") {
+      await enforceSuperadminClientLimit(createdBy);
+    }
 
     // Create user
     const newUser = await db

@@ -994,6 +994,24 @@ const steps: MigrationStep[] = [
       CREATE INDEX IF NOT EXISTS white_label_domains_superadmin_idx ON white_label_domains(superadmin_id);
     `,
   },
+  {
+    description: "Create platform superadmin controls table (if not exists)",
+    sql: `
+      CREATE TABLE IF NOT EXISTS platform_superadmin_controls (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        superadmin_id VARCHAR NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+        plan_name TEXT NOT NULL DEFAULT 'Starter Partner',
+        client_limit INTEGER,
+        workspace_limit INTEGER,
+        credit_balance NUMERIC(14,2) NOT NULL DEFAULT 0,
+        notes TEXT,
+        created_by VARCHAR REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS platform_superadmin_controls_superadmin_idx ON platform_superadmin_controls(superadmin_id);
+    `,
+  },
 
   {
     description: "Create marketing CMS logos table (if not exists)",

@@ -785,16 +785,26 @@ export function registerWhiteLabelRoutes(app: Express) {
 
   app.post(`${BASE}/impersonation/stop`, requireAuth, async (req, res) => {
     const session = (req as any).session;
-    const original = session?.originalSuperadmin;
+    const original = session?.originalSuperadmin || session?.originalPlatformAdmin;
     if (!original) return res.status(400).json({ error: "No impersonation session" });
-    const targetId = session.impersonation?.clientId || session.user?.id || null;
+    const isPlatformImpersonation = !!session?.originalPlatformAdmin;
+    const targetId = session.impersonation?.clientId || session.impersonation?.superadminId || session.user?.id || null;
     session.user = original;
     session.originalSuperadmin = undefined;
+    session.originalPlatformAdmin = undefined;
     session.impersonation = undefined;
-    await audit(req, "impersonation.stop", "client", targetId, null, { superadmin: original.id }, original.id);
+    await audit(
+      req,
+      "impersonation.stop",
+      isPlatformImpersonation ? "superadmin" : "client",
+      targetId,
+      null,
+      { restoredUser: original.id, restoredRole: original.role },
+      original.id
+    );
     session.save((err: Error | null) => {
       if (err) return res.status(500).json({ error: "Unable to stop impersonation" });
-      res.json({ success: true, redirectTo: "/white-label" });
+      res.json({ success: true, redirectTo: isPlatformImpersonation ? "/platform" : "/white-label" });
     });
   });
 

@@ -269,16 +269,19 @@ function ImpersonationBanner() {
   });
 
   if (!user?.impersonatedBy) return null;
+  const platformImpersonation = user.role === "superadmin";
 
   return (
     <div className="sticky top-0 z-40 flex flex-col gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 sm:flex-row sm:items-center sm:justify-between">
-      <span>Super admin impersonation is active for {user.email}. You have full access to this client account.</span>
+      <span>
+        {platformImpersonation ? "Platform admin" : "Super admin"} impersonation is active for {user.email}. You have full access to this {platformImpersonation ? "partner" : "client"} account.
+      </span>
       <button
         className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
         disabled={stopImpersonation.isPending}
         onClick={() => stopImpersonation.mutate()}
       >
-        Return to Super Admin
+        Return to {platformImpersonation ? "Platform Admin" : "Super Admin"}
       </button>
     </div>
   );
