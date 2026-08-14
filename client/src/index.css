@@ -164,4 +164,65 @@ html {
   }
 }
 
+/* Public marketing site spacing
+   Keeps admin app untouched while making public pages use the viewport better. */
+.public-site-main > div[class*="pt-40"],
+.public-site-main > div[class*="pt-44"] {
+  padding-top: 0 !important;
+}
+
+.public-site-main > div[class*="pt-40"] > section:first-child,
+.public-site-main > div[class*="pt-44"] > section:first-child {
+  padding-top: 1.75rem;
+}
+
+.public-site-main section > div.mx-auto[class*="max-w-7xl"],
+.public-site-main section > div.mx-auto[class*="max-w-10xl"],
+.public-site-main section > div.mx-auto[class*="max-w-[1180px]"],
+.public-site-main section > div.mx-auto[class*="max-w-6xl"] {
+  max-width: min(100% - 1rem, 1840px) !important;
+}
+
+.public-site-main section > div.mx-auto[class*="max-w-5xl"] {
+  max-width: min(100% - 1rem, 1680px) !important;
+}
+
+@media (min-width: 1024px) {
+  .public-site-main section[class*="px-4"],
+  .public-site-main section[class*="lg:px-8"] {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .public-site-main section > div.mx-auto[class*="px-4"],
+  .public-site-main section > div.mx-auto[class*="lg:px-8"] {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+}
+
+@media (min-width: 640px) {
+  .public-site-header > div:not(:first-child) > div,
+  .public-site-header .launch-bar-track {
+    max-width: min(100% - 1rem, 1840px);
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
+@media (max-width: 639px) {
+  .public-site-main > div[class*="pt-40"],
+  .public-site-main > div[class*="pt-44"] {
+    padding-top: 0 !important;
+  }
+
+  .public-site-main > div[class*="pt-40"] > section:first-child,
+  .public-site-main > div[class*="pt-44"] > section:first-child {
+    padding-top: 1.25rem;
+  }
+
+  .public-site-main section > div.mx-auto[class*="max-w-"] {
+    max-width: calc(100% - 1rem) !important;
+  }
+}
 

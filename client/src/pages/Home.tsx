@@ -210,7 +210,7 @@ const Home = () => {
 
   return (
     <div className="overflow-hidden bg-white text-slate-950">
-      <section className="relative isolate pt-40 sm:pt-44">
+      <section className="relative isolate pt-8 sm:pt-10">
         <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_50%_0%,rgba(34,197,94,0.18),transparent_32%),linear-gradient(180deg,#ecfdf5_0%,#ffffff_62%)]" />
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="grid items-center gap-12 lg:grid-cols-[1.02fr_0.98fr]">
@@ -599,4 +599,3 @@ const Home = () => {
 };
 
 export default Home;
-

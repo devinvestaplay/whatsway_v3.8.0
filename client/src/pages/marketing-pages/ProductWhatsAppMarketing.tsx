@@ -211,7 +211,7 @@ export default function ProductWhatsappMarketingPage() {
     : testimonials;
 
   return (
-    <div className="bg-white pt-40 text-slate-950 sm:pt-44">
+    <div className="bg-white text-slate-950">
       <section className="bg-white pb-12 pt-10">
         <div className="mx-auto grid max-w-[1180px] gap-10 px-4 sm:px-6 lg:grid-cols-[0.92fr_1.08fr] lg:items-center lg:px-8">
           <div className="text-center lg:text-left">

@@ -199,7 +199,7 @@ export default function PublicPricingPage() {
   };
 
   return (
-    <div className="bg-white pt-40 text-slate-950 sm:pt-44">
+    <div className="bg-white text-slate-950">
       <section className="relative overflow-hidden bg-gradient-to-b from-green-50 via-white to-white pb-16 pt-12 sm:pb-20 sm:pt-16">
         <div className="mx-auto max-w-[1500px] px-4 text-center sm:px-6 lg:px-8">
           <div className="inline-flex items-center gap-2 rounded-full border border-green-200 bg-white px-4 py-2 text-sm font-black text-green-700 shadow-sm">

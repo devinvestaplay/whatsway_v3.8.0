@@ -130,14 +130,14 @@ const Hero = () => {
   };
 
   return (
-    <section className="pt-24 pb-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-slate-50 via-white to-emerald-50/30 relative overflow-hidden">
+    <section className="pt-14 pb-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-slate-50 via-white to-emerald-50/30 relative overflow-hidden">
       <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute -top-40 -right-40 w-[500px] h-[500px] bg-emerald-100 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-[pulse_6s_ease-in-out_infinite]"></div>
+        <div className="absolute -top-10 -right-40 w-[500px] h-[500px] bg-emerald-100 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-[pulse_6s_ease-in-out_infinite]"></div>
         <div className="absolute -bottom-40 -left-40 w-[400px] h-[400px] bg-blue-100 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-[pulse_8s_ease-in-out_infinite_2s]"></div>
         <div className="absolute top-1/3 left-1/2 transform -translate-x-1/2 w-[600px] h-[600px] bg-violet-50 rounded-full mix-blend-multiply filter blur-3xl opacity-15 animate-[pulse_10s_ease-in-out_infinite_4s]"></div>
       </div>
 
-      <div className="max-w-7xl mx-auto relative">
+      <div className="max-w-10xl mx-auto relative">
         <div className="text-center mb-16">
           <div className="inline-flex items-center bg-emerald-50 text-emerald-700 px-4 py-2 rounded-full text-sm font-medium mb-8 border border-emerald-200/60 animate-[fadeInDown_0.6s_ease-out]">
             <Zap className="w-4 h-4 mr-2" />

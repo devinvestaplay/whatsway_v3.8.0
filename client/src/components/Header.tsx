@@ -263,7 +263,7 @@ const Header = () => {
         </div>
       </div>
     </header>
-    <div className="h-[124px] shrink-0" aria-hidden="true" />
+    <div className={`${announcementEnabled ? "h-[137px]" : "h-20"} shrink-0`} aria-hidden="true" />
     </>
   );
 };

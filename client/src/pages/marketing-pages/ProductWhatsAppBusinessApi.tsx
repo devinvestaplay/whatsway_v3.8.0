@@ -163,7 +163,7 @@ export default function ProductWhatsappBusinessApiPage() {
   const appName = brandSettings?.title || "WhatsWay";
 
   return (
-    <div className="bg-white pt-40 text-slate-950 sm:pt-44">
+    <div className="bg-white text-slate-950">
       <section className="bg-white pb-12 pt-10">
         <div className="mx-auto grid max-w-[1180px] gap-10 px-4 sm:px-6 lg:grid-cols-[0.95fr_1.05fr] lg:items-center lg:px-8">
           <div>

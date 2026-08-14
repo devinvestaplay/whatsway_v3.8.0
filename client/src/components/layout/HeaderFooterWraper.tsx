@@ -53,7 +53,7 @@ export const HeaderFooterWraper = ({ children }: LayoutProps) => {
   return (
     <div className="min-h-screen bg-background">
       <Header />
-      <main>{children}</main>
+      <main className="public-site-main">{children}</main>
       <Footer />
     </div>
   );

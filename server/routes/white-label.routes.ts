@@ -686,6 +686,39 @@ export function registerWhiteLabelRoutes(app: Express) {
     });
   });
 
+  app.delete(`${BASE}/clients/:id`, ...guard, async (req, res) => {
+    const db = await pool.connect();
+    try {
+      await db.query("BEGIN");
+      const before = await db.query(`SELECT id, email, username, role FROM users WHERE id=$1 AND role='admin' FOR UPDATE`, [req.params.id]);
+      const client = before.rows[0];
+      if (!client) {
+        await db.query("ROLLBACK");
+        return res.status(404).json({ error: "Client not found" });
+      }
+      const workspaces = await db.query(`SELECT id FROM channels c WHERE ${workspaceOwnerExpression()}=$1`, [req.params.id]);
+      const workspaceIds = workspaces.rows.map((row) => row.id);
+      if (workspaceIds.length) {
+        await db.query(`DELETE FROM white_label_workspace_addons WHERE workspace_id = ANY($1::varchar[])`, [workspaceIds]);
+        await db.query(`DELETE FROM white_label_credit_transactions WHERE workspace_id = ANY($1::varchar[])`, [workspaceIds]);
+        await db.query(`DELETE FROM white_label_topup_payments WHERE workspace_id = ANY($1::varchar[])`, [workspaceIds]);
+        await db.query(`DELETE FROM channels WHERE id = ANY($1::varchar[])`, [workspaceIds]);
+      }
+      await db.query(`DELETE FROM white_label_credit_transactions WHERE client_id=$1`, [req.params.id]);
+      await db.query(`DELETE FROM white_label_topup_payments WHERE client_id=$1`, [req.params.id]);
+      await db.query(`UPDATE users SET created_by=NULL WHERE created_by=$1`, [req.params.id]);
+      await db.query(`DELETE FROM users WHERE id=$1`, [req.params.id]);
+      await db.query("COMMIT");
+      await audit(req, "client.delete", "client", req.params.id, client, { deleted: true, workspaceCount: workspaceIds.length });
+      res.json({ success: true, id: req.params.id, deletedWorkspaces: workspaceIds.length });
+    } catch (error: any) {
+      await db.query("ROLLBACK");
+      res.status(409).json({ error: "Client could not be deleted because related records are protected", detail: error?.message });
+    } finally {
+      db.release();
+    }
+  });
+
   app.post(`${BASE}/impersonation/stop`, requireAuth, async (req, res) => {
     const session = (req as any).session;
     const original = session?.originalSuperadmin;
@@ -810,6 +843,31 @@ export function registerWhiteLabelRoutes(app: Express) {
     }
   });
 
+  app.delete(`${BASE}/workspaces/:id`, ...guard, async (req, res) => {
+    const db = await pool.connect();
+    try {
+      await db.query("BEGIN");
+      const before = await db.query(`SELECT * FROM channels WHERE id=$1 FOR UPDATE`, [req.params.id]);
+      const workspace = before.rows[0];
+      if (!workspace) {
+        await db.query("ROLLBACK");
+        return res.status(404).json({ error: "Workspace not found" });
+      }
+      await db.query(`DELETE FROM white_label_workspace_addons WHERE workspace_id=$1`, [req.params.id]);
+      await db.query(`DELETE FROM white_label_credit_transactions WHERE workspace_id=$1`, [req.params.id]);
+      await db.query(`DELETE FROM white_label_topup_payments WHERE workspace_id=$1`, [req.params.id]);
+      await db.query(`DELETE FROM channels WHERE id=$1`, [req.params.id]);
+      await db.query("COMMIT");
+      await audit(req, "workspace.delete", "channel", req.params.id, workspace, { deleted: true });
+      res.json({ success: true, id: req.params.id });
+    } catch (error: any) {
+      await db.query("ROLLBACK");
+      res.status(409).json({ error: "Workspace could not be deleted because related records are protected", detail: error?.message });
+    } finally {
+      db.release();
+    }
+  });
+
   app.get(`${BASE}/workspaces/export`, ...guard, async (_req, res) => {
     const result = await pool.query(`
       SELECT c.id, c.name, c.phone_number, c.is_active, COALESCE(c.white_label_workspace_type,'free') AS plan,
@@ -833,13 +891,33 @@ export function registerWhiteLabelRoutes(app: Express) {
 
   app.get(`${BASE}/credits`, ...guard, async (req, res) => {
     const { limit, offset, page } = pageParams(req);
+    const clientId = String(req.query.clientId || "").trim();
+    const workspaceId = String(req.query.workspaceId || "").trim();
+    const search = String(req.query.search || "").trim();
+    const clauses: string[] = [];
+    const params: any[] = [];
+    if (clientId) {
+      params.push(clientId);
+      clauses.push(`t.client_id=$${params.length}`);
+    }
+    if (workspaceId) {
+      params.push(workspaceId);
+      clauses.push(`t.workspace_id=$${params.length}`);
+    }
+    if (search) {
+      params.push(`%${search}%`);
+      clauses.push(`(t.transaction_type ILIKE $${params.length} OR t.reference ILIKE $${params.length} OR t.note ILIKE $${params.length})`);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    params.push(limit, offset);
     const result = await pool.query(`
       SELECT t.*, u.email AS client_email, c.name AS workspace_name
       FROM white_label_credit_transactions t
       LEFT JOIN users u ON u.id=t.client_id
       LEFT JOIN channels c ON c.id=t.workspace_id
-      ORDER BY t.created_at DESC LIMIT $1 OFFSET $2`, [limit, offset]);
-    const total = await pool.query(`SELECT COUNT(*)::int AS count FROM white_label_credit_transactions`);
+      ${where}
+      ORDER BY t.created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+    const total = await pool.query(`SELECT COUNT(*)::int AS count FROM white_label_credit_transactions t ${where}`, params.slice(0, -2));
     res.json({ rows: result.rows, total: total.rows[0].count, page, limit });
   });
 

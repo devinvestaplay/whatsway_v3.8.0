@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { BadgeCheck, Building2, CheckCircle, CreditCard, Download, Edit3, Eye, History, LogIn, Package, Palette, Plus, Receipt, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Users } from "lucide-react";
+import { BadgeCheck, Building2, CheckCircle, CreditCard, Download, Edit3, Eye, History, LogIn, Minus, MoreHorizontal, Package, Palette, Plus, Receipt, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Trash2, Users } from "lucide-react";
 import { apiRequest, queryClient, readApiJson } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 const API = "/api/superadmin/white-label";
 
@@ -75,7 +78,7 @@ type WorkspaceRow = {
   subscription_status?: string;
 };
 
-type CreditRow = { id: string; client_email?: string; workspace_name?: string; transaction_type: string; credits: string; balance_before: string; balance_after: string; reference?: string; note?: string; created_at: string };
+type CreditRow = { id: string; client_id?: string; workspace_id?: string; client_email?: string; workspace_name?: string; transaction_type: string; credits: string; balance_before: string; balance_after: string; reference?: string; note?: string; created_at: string };
 type PartnerRow = { id: string; name: string; email: string; company_name?: string; status: string; commission_rate: string; revenue_share_rate: string; clients_count: number };
 type AuditRow = { id: string; actor_email?: string; action_type: string; target_type: string; target_id?: string; created_at: string };
 type FeatureRow = { key: string; label: string; group: string };
@@ -220,6 +223,10 @@ export default function WhiteLabel() {
   const [creditForm, setCreditForm] = useState({ clientId: "", workspaceId: "", transactionType: "credit", credits: "", reference: "", note: "" });
   const [partnerForm, setPartnerForm] = useState({ name: "", email: "", companyName: "", phone: "", commissionRate: "0", revenueShareRate: "0" });
   const [pointForm, setPointForm] = useState<{ workspaceId: string; name: string; transactionType: "credit" | "debit" | "adjustment"; credits: string; note: string } | null>(null);
+  const [pointsWorkspace, setPointsWorkspace] = useState<WorkspaceRow | null>(null);
+  const [pointsSearch, setPointsSearch] = useState("");
+  const [showAdjustPoints, setShowAdjustPoints] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ type: "client" | "workspace"; id: string; name: string } | null>(null);
   const [billingTab, setBillingTab] = useState("prepaid");
   const [planPanel, setPlanPanel] = useState<"customization" | "features" | "billing">("customization");
   const [selectedPlanId, setSelectedPlanId] = useState("");
@@ -232,6 +239,9 @@ export default function WhiteLabel() {
 
   const clientUrl = makeQuery(`${API}/clients`, { search });
   const workspaceUrl = makeQuery(`${API}/workspaces`, { search, ownerId: workspaceOwnerId });
+  const pointsLedgerUrl = pointsWorkspace
+    ? makeQuery(`${API}/credits`, { workspaceId: pointsWorkspace.id, search: pointsSearch })
+    : `${API}/credits`;
 
   const { data: summary } = useQuery<Summary>({ queryKey: [`${API}/summary`] });
   const { data: settings } = useQuery<WhiteLabelSettings>({ queryKey: [`${API}/settings`] });
@@ -245,6 +255,7 @@ export default function WhiteLabel() {
   const { data: planConfigs } = useQuery<{ rows: PlanConfigRow[] }>({ queryKey: [`${API}/billing/plans`], enabled: tab === "billing" && billingTab === "plans" });
   const { data: addonCatalog } = useQuery<{ rows: AddonCatalogRow[] }>({ queryKey: [`${API}/billing/addons`], enabled: tab === "billing" && billingTab === "addons" });
   const { data: topupOptions } = useQuery<{ rows: TopupOptionRow[] }>({ queryKey: [`${API}/billing/topups`], enabled: tab === "billing" && billingTab === "addons" });
+  const { data: pointsLedger } = useQuery<ListResponse<CreditRow>>({ queryKey: [pointsLedgerUrl], enabled: !!pointsWorkspace });
 
   useEffect(() => {
     if (settings) setSettingsForm(settings);
@@ -291,7 +302,21 @@ export default function WhiteLabel() {
 
   const updatePoints = useMutation({
     mutationFn: () => apiRequest("PATCH", `${API}/workspaces/${pointForm?.workspaceId}/points`, { transactionType: pointForm?.transactionType, credits: Number(pointForm?.credits || 0), note: pointForm?.note || null }),
-    onSuccess: () => { setPointForm(null); invalidateAll(); toast({ title: "Workspace points updated" }); },
+    onSuccess: () => { setPointForm(null); setShowAdjustPoints(false); invalidateAll(); if (pointsWorkspace) queryClient.invalidateQueries({ queryKey: [pointsLedgerUrl] }); toast({ title: "Workspace points updated" }); },
+  });
+
+  const deleteEntity = useMutation({
+    mutationFn: (target: { type: "client" | "workspace"; id: string; name: string }) => {
+      const path = target.type === "client" ? `${API}/clients/${target.id}` : `${API}/workspaces/${target.id}`;
+      return apiRequest("DELETE", path);
+    },
+    onSuccess: () => {
+      const label = deleteTarget?.type === "client" ? "Client" : "Workspace";
+      setDeleteTarget(null);
+      invalidateAll();
+      toast({ title: `${label} deleted` });
+    },
+    onError: (error: Error) => toast({ title: "Delete failed", description: error.message, variant: "destructive" }),
   });
 
   const createWorkspace = useMutation({
@@ -425,6 +450,12 @@ export default function WhiteLabel() {
     setTab("workspaces");
   };
 
+  const openWorkspacePoints = (workspace: WorkspaceRow) => {
+    setPointsWorkspace(workspace);
+    setPointsSearch("");
+    setPointForm({ workspaceId: workspace.id, name: workspace.name, transactionType: "credit", credits: "", note: "" });
+  };
+
   const updateSelectedPlan = (updates: Partial<PlanConfigRow>) => {
     if (!selectedPlan) return;
     queryClient.setQueryData<{ rows: PlanConfigRow[] }>([`${API}/billing/plans`], (current) => ({
@@ -556,18 +587,9 @@ export default function WhiteLabel() {
                 <Button variant="outline" size="sm" onClick={() => setWorkspaceOwnerId("")}>Show All Workspaces</Button>
               </div>
             )}
-            {pointForm && (
-              <div className="mb-4 grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-[1fr_160px_140px_1fr_auto] md:items-end">
-                <div><p className="text-xs font-semibold uppercase text-slate-500">Editing points</p><p className="font-semibold text-slate-900">{pointForm.name}</p></div>
-                <select className="h-10 rounded-md border bg-white px-3 text-sm" value={pointForm.transactionType} onChange={(e) => setPointForm({ ...pointForm, transactionType: e.target.value as "credit" | "debit" | "adjustment" })}><option value="credit">Increase</option><option value="debit">Decrease</option><option value="adjustment">Set Exact</option></select>
-                <Input placeholder="Points" type="number" value={pointForm.credits} onChange={(e) => setPointForm({ ...pointForm, credits: e.target.value })} />
-                <Input placeholder="Note" value={pointForm.note} onChange={(e) => setPointForm({ ...pointForm, note: e.target.value })} />
-                <div className="flex gap-2"><Button disabled={!pointForm.credits} onClick={() => updatePoints.mutate()}>Save</Button><Button variant="outline" onClick={() => setPointForm(null)}>Cancel</Button></div>
-              </div>
-            )}
             <table className="w-full min-w-[1180px] text-sm">
-              <thead><tr className="border-b text-left text-slate-500"><th className="p-3">Active</th><th className="p-3">Id</th><th className="p-3">Name</th><th className="p-3">End Date</th><th className="p-3">Bot Users</th><th className="p-3">Bots</th><th className="p-3">Members</th><th className="p-3">Addon</th><th className="p-3">Owner</th><th className="p-3">Created at</th><th className="p-3">Points</th><th className="p-3">Auto Renew</th></tr></thead>
-              <tbody>{(workspaces?.rows ?? []).map((w) => <tr key={w.id} className="border-b last:border-0"><td className="p-3"><Switch checked={!!w.is_active} onCheckedChange={(v) => patchWorkspace.mutate({ id: w.id, payload: { isActive: v } })} /></td><td className="p-3 font-mono text-xs text-slate-500">{w.id.slice(0, 8)}</td><td className="p-3 font-semibold">{w.name}<div className="text-xs font-normal text-slate-500">{w.phone_number || "Workspace shell"}</div></td><td className="p-3">{formatDate(w.end_date)}</td><td className="p-3">{formatNumber(w.bot_users)}</td><td className="p-3">{formatNumber(w.bots)}</td><td className="p-3">{formatNumber(w.members)}</td><td className="p-3">{formatNumber(w.addon_count)}</td><td className="p-3">{w.owner_name || w.owner_email || "Unassigned"}<div className="text-xs text-slate-500">{w.owner_email}</div><div className="font-mono text-[11px] text-slate-400">{w.owner_id}</div></td><td className="p-3">{formatDate(w.created_at)}</td><td className="p-3"><button className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white" onClick={() => setPointForm({ workspaceId: w.id, name: w.name, transactionType: "credit", credits: "", note: "" })}>{formatNumber(w.points)}</button></td><td className="p-3"><Switch checked={!!w.auto_renew} onCheckedChange={(v) => patchWorkspace.mutate({ id: w.id, payload: { autoRenew: v } })} /></td></tr>)}</tbody>
+              <thead><tr className="border-b text-left text-slate-500"><th className="p-3">Active</th><th className="p-3">Id</th><th className="p-3">Name</th><th className="p-3">End Date</th><th className="p-3">Bot Users</th><th className="p-3">Bots</th><th className="p-3">Members</th><th className="p-3">Addon</th><th className="p-3">Owner</th><th className="p-3">Created at</th><th className="p-3">Points</th><th className="p-3">Auto Renew</th><th className="p-3 text-right">Actions</th></tr></thead>
+              <tbody>{(workspaces?.rows ?? []).map((w) => <tr key={w.id} className="border-b last:border-0"><td className="p-3"><Switch checked={!!w.is_active} onCheckedChange={(v) => patchWorkspace.mutate({ id: w.id, payload: { isActive: v } })} /></td><td className="p-3 font-mono text-xs text-slate-500">{w.id.slice(0, 8)}</td><td className="p-3 font-semibold">{w.name}<div className="text-xs font-normal text-slate-500">{w.phone_number || "Workspace shell"}</div></td><td className="p-3">{formatDate(w.end_date)}</td><td className="p-3">{formatNumber(w.bot_users)}</td><td className="p-3">{formatNumber(w.bots)}</td><td className="p-3">{formatNumber(w.members)}</td><td className="p-3">{formatNumber(w.addon_count)}</td><td className="p-3">{w.owner_name || w.owner_email || "Unassigned"}<div className="text-xs text-slate-500">{w.owner_email}</div><div className="font-mono text-[11px] text-slate-400">{w.owner_id}</div></td><td className="p-3">{formatDate(w.created_at)}</td><td className="p-3"><button className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white" onClick={() => openWorkspacePoints(w)}>{formatNumber(w.points)}</button></td><td className="p-3"><Switch checked={!!w.auto_renew} onCheckedChange={(v) => patchWorkspace.mutate({ id: w.id, payload: { autoRenew: v } })} /></td><td className="p-3 text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button size="icon" variant="outline"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => openWorkspacePoints(w)}><Receipt className="mr-2 h-4 w-4" />Manage points</DropdownMenuItem><DropdownMenuItem className="text-red-600 focus:text-red-600" onClick={() => setDeleteTarget({ type: "workspace", id: w.id, name: w.name })}><Trash2 className="mr-2 h-4 w-4" />Delete workspace</DropdownMenuItem></DropdownMenuContent></DropdownMenu></td></tr>)}</tbody>
             </table>
           </TableCard>
         )}
@@ -576,7 +598,7 @@ export default function WhiteLabel() {
           <TableCard title="Clients">
             <table className="w-full min-w-[1380px] text-sm">
               <thead><tr className="border-b text-left text-slate-500"><th className="p-3">Client</th><th className="p-3">Client ID</th><th className="p-3">Created at</th><th className="p-3">Updated at</th><th className="p-3">Status</th><th className="p-3">Workspace</th><th className="p-3">Bots</th><th className="p-3">Bot Users</th><th className="p-3">Members</th><th className="p-3">Add-on</th><th className="p-3">Points</th><th className="p-3">Plan</th><th className="p-3 text-right">Actions</th></tr></thead>
-              <tbody>{(clients?.rows ?? []).map((c) => <tr key={c.id} className="border-b last:border-0"><td className="p-3 font-semibold">{c.first_name || c.username} {c.last_name || ""}<div className="text-xs font-normal text-slate-500">{c.email}</div></td><td className="p-3 font-mono text-sm font-semibold text-slate-700">{c.public_client_id || "-"}</td><td className="p-3">{formatDate(c.created_at)}</td><td className="p-3">{formatDate(c.updated_at)}</td><td className="p-3"><StatusPill value={c.status} /></td><td className="p-3"><button className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 font-bold text-emerald-700" onClick={() => openClientWorkspaces(c)}><Eye className="h-3.5 w-3.5" />{formatNumber(c.workspaces)}</button></td><td className="p-3">{formatNumber(c.bots)}</td><td className="p-3">{formatNumber(c.bot_users)}</td><td className="p-3">{formatNumber(c.members)}</td><td className="p-3">{formatNumber(c.addon_count)}</td><td className="p-3">{formatNumber(c.credit_balance)}</td><td className="p-3">{c.subscription_status || "none"}<div className="text-xs text-slate-500">{formatDate(c.end_date)}</div></td><td className="p-3 text-right"><Button size="sm" variant="outline" disabled={c.status !== "active" || impersonateClient.isPending} onClick={() => impersonateClient.mutate(c.id)}><LogIn className="mr-2 h-4 w-4" /> Impersonate</Button></td></tr>)}</tbody>
+              <tbody>{(clients?.rows ?? []).map((c) => <tr key={c.id} className="border-b last:border-0"><td className="p-3 font-semibold">{c.first_name || c.username} {c.last_name || ""}<div className="text-xs font-normal text-slate-500">{c.email}</div></td><td className="p-3 font-mono text-sm font-semibold text-slate-700">{c.public_client_id || "-"}</td><td className="p-3">{formatDate(c.created_at)}</td><td className="p-3">{formatDate(c.updated_at)}</td><td className="p-3"><StatusPill value={c.status} /></td><td className="p-3"><button className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 font-bold text-emerald-700" onClick={() => openClientWorkspaces(c)}><Eye className="h-3.5 w-3.5" />{formatNumber(c.workspaces)}</button></td><td className="p-3">{formatNumber(c.bots)}</td><td className="p-3">{formatNumber(c.bot_users)}</td><td className="p-3">{formatNumber(c.members)}</td><td className="p-3">{formatNumber(c.addon_count)}</td><td className="p-3">{formatNumber(c.credit_balance)}</td><td className="p-3">{c.subscription_status || "none"}<div className="text-xs text-slate-500">{formatDate(c.end_date)}</div></td><td className="p-3 text-right"><div className="flex justify-end gap-2"><Button size="sm" variant="outline" disabled={c.status !== "active" || impersonateClient.isPending} onClick={() => impersonateClient.mutate(c.id)}><LogIn className="mr-2 h-4 w-4" /> Impersonate</Button><DropdownMenu><DropdownMenuTrigger asChild><Button size="icon" variant="outline"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => openClientWorkspaces(c)}><Eye className="mr-2 h-4 w-4" />View workspaces</DropdownMenuItem><DropdownMenuItem className="text-red-600 focus:text-red-600" onClick={() => setDeleteTarget({ type: "client", id: c.id, name: c.email })}><Trash2 className="mr-2 h-4 w-4" />Delete client</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div></td></tr>)}</tbody>
             </table>
           </TableCard>
         )}
@@ -836,6 +858,94 @@ export default function WhiteLabel() {
 
         {tab === "audit" && <TableCard title="Audit Logs"><table className="w-full text-sm"><thead><tr className="border-b text-left text-slate-500"><th className="p-3">Action</th><th className="p-3">Actor</th><th className="p-3">Target</th><th className="p-3">Date</th></tr></thead><tbody>{(audit?.rows ?? []).map((a) => <tr key={a.id} className="border-b last:border-0"><td className="p-3 font-semibold">{a.action_type}</td><td className="p-3">{a.actor_email || "System"}</td><td className="p-3">{a.target_type}<div className="text-xs text-slate-500">{a.target_id}</div></td><td className="p-3">{new Date(a.created_at).toLocaleString()}</td></tr>)}</tbody></table></TableCard>}
       </div>
+
+      <Dialog open={!!pointsWorkspace} onOpenChange={(open) => { if (!open) { setPointsWorkspace(null); setPointForm(null); setShowAdjustPoints(false); } }}>
+        <DialogContent className="max-w-[95vw] lg:max-w-6xl">
+          <DialogHeader>
+            <DialogTitle>Manage Points</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-5">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-950">{pointsWorkspace?.name}</p>
+                <p className="text-xs text-slate-500">{pointsWorkspace?.owner_email || "No owner"} · Balance {formatNumber(pointsWorkspace?.points)}</p>
+              </div>
+              <Button onClick={() => setShowAdjustPoints(true)}>Adjust Points</Button>
+            </div>
+            <div className="relative max-w-sm">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input className="pl-9" placeholder="Search by action, reference, note..." value={pointsSearch} onChange={(e) => setPointsSearch(e.target.value)} />
+            </div>
+            <div className="max-h-[55vh] overflow-auto rounded-xl border border-slate-200">
+              <table className="w-full min-w-[820px] text-sm">
+                <thead><tr className="border-b bg-slate-50 text-left text-slate-500"><th className="p-3">Action</th><th className="p-3">Amount</th><th className="p-3">Points</th><th className="p-3">Note</th><th className="p-3 text-right">Time</th></tr></thead>
+                <tbody>{(pointsLedger?.rows ?? []).map((entry) => {
+                  const type = entry.transaction_type;
+                  const amount = type === "debit" ? -Number(entry.credits || 0) : Number(entry.credits || 0);
+                  return <tr key={entry.id} className="border-b last:border-0"><td className="p-3"><StatusPill value={type} /></td><td className={`p-3 font-semibold ${amount < 0 ? "text-red-600" : "text-emerald-600"}`}>{amount < 0 ? "-" : ""}{formatNumber(Math.abs(amount))}</td><td className="p-3">{formatNumber(entry.balance_after)}</td><td className="p-3">{entry.note || entry.reference || "-"}</td><td className="p-3 text-right text-slate-500">{new Date(entry.created_at).toLocaleString()}</td></tr>;
+                })}</tbody>
+              </table>
+              {!(pointsLedger?.rows ?? []).length && <div className="p-8 text-center text-sm text-slate-500">No point history found for this workspace.</div>}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showAdjustPoints} onOpenChange={setShowAdjustPoints}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Points Balance Adjustment</DialogTitle>
+          </DialogHeader>
+          {pointForm && (
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-slate-700">Action</label>
+                <select className="h-11 w-full rounded-md border bg-white px-3 text-sm" value={pointForm.transactionType} onChange={(e) => setPointForm({ ...pointForm, transactionType: e.target.value as "credit" | "debit" | "adjustment" })}>
+                  <option value="credit">Increase points</option>
+                  <option value="debit">Decrease points</option>
+                  <option value="adjustment">Set exact balance</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-slate-700">Points</label>
+                <div className="flex max-w-xs overflow-hidden rounded-md border bg-white">
+                  <button type="button" className="flex h-11 w-14 items-center justify-center border-r text-slate-500 hover:bg-slate-50" onClick={() => setPointForm({ ...pointForm, credits: String(Math.max(0, Number(pointForm.credits || 0) - 1)) })}><Minus className="h-4 w-4" /></button>
+                  <Input className="h-11 rounded-none border-0 text-center focus-visible:ring-0" type="number" min="0" value={pointForm.credits} onChange={(e) => setPointForm({ ...pointForm, credits: e.target.value })} />
+                  <button type="button" className="flex h-11 w-14 items-center justify-center border-l text-slate-500 hover:bg-slate-50" onClick={() => setPointForm({ ...pointForm, credits: String(Number(pointForm.credits || 0) + 1) })}><Plus className="h-4 w-4" /></button>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-slate-700"><span className="text-red-500">*</span> Reason</label>
+                <Textarea rows={4} maxLength={500} value={pointForm.note} onChange={(e) => setPointForm({ ...pointForm, note: e.target.value })} />
+                <p className="text-right text-xs text-slate-400">{pointForm.note.length}/500</p>
+              </div>
+              <div className="flex justify-end gap-3 border-t pt-4">
+                <Button variant="outline" onClick={() => setShowAdjustPoints(false)}>Cancel</Button>
+                <Button disabled={!pointForm.credits || Number(pointForm.credits) <= 0 || !pointForm.note.trim() || updatePoints.isPending} onClick={() => updatePoints.mutate()}>
+                  {updatePoints.isPending ? "Applying..." : "Apply"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {deleteTarget?.type === "client" ? "client" : "workspace"}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete <strong>{deleteTarget?.name}</strong>. Related white-label records will be cleaned up, and protected records may block deletion.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteEntity.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 text-white hover:bg-red-700" disabled={deleteEntity.isPending} onClick={(event) => { event.preventDefault(); if (deleteTarget) deleteEntity.mutate(deleteTarget); }}>
+              {deleteEntity.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </main>
   );
 }

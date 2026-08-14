@@ -32,7 +32,7 @@ export function MarketingPageLayout({ page }: MarketingPageProps) {
   const appName = brandSettings?.title || "WhatsWay";
 
   return (
-    <div className="bg-white pt-40 text-slate-950 sm:pt-44">
+    <div className="bg-white text-slate-950">
       <section className="relative overflow-hidden border-b border-emerald-100 bg-gradient-to-b from-emerald-50 to-white py-16 sm:py-20">
         <div className="mx-auto grid max-w-7xl gap-10 px-4 sm:px-6 lg:grid-cols-[1fr_0.85fr] lg:items-center lg:px-8">
           <div>
