@@ -220,4 +220,23 @@ export function registerPlatformRoutes(app: Express) {
     const tenant = await resolveTenantFromRequest(req);
     res.json({ host: requestHost(req), tenant });
   });
+
+  app.get("/api/tenant/allow-domain", async (req: Request, res: Response) => {
+    const { normalizeHost, requestHost, resolveTenantByHost } = await import("../services/tenant-domain.service");
+    const domain = normalizeHost(String(req.query.domain || req.query.host || requestHost(req)));
+    const tenant = await resolveTenantByHost(domain);
+
+    if (!tenant) {
+      return res.status(403).json({ allowed: false, domain });
+    }
+
+    res.json({
+      allowed: true,
+      domain,
+      tenant: {
+        domainId: tenant.domainId,
+        superadminId: tenant.superadminId,
+      },
+    });
+  });
 }
