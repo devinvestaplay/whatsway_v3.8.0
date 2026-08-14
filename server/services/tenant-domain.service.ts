@@ -18,7 +18,7 @@ export function requestHost(req: Request): string {
   return normalizeHost(forwardedHost || req.get("host"));
 }
 
-export async function resolveTenantByHost(host: string) {
+export async function lookupTenantByHost(host: string) {
   const normalizedHost = normalizeHost(host);
   if (!normalizedHost || normalizedHost === "localhost" || normalizedHost === "127.0.0.1") {
     return null;
@@ -32,16 +32,28 @@ export async function resolveTenantByHost(host: string) {
       superadminId: whiteLabelDomains.superadminId,
       superadminEmail: users.email,
       superadminName: sql<string>`concat_ws(' ', ${users.firstName}, ${users.lastName})`,
+      superadminStatus: users.status,
     })
     .from(whiteLabelDomains)
     .innerJoin(users, eq(users.id, whiteLabelDomains.superadminId))
     .where(sql`lower(regexp_replace(${whiteLabelDomains.domain}, '^www\\.', '')) = ${normalizedHost}`)
     .limit(1);
 
-  if (!tenant || tenant.status !== "active") return null;
+  return tenant || null;
+}
+
+export async function resolveTenantByHost(host: string) {
+  const tenant = await lookupTenantByHost(host);
+  if (!tenant || tenant.status !== "active" || tenant.superadminStatus !== "active") return null;
   return tenant;
 }
 
 export async function resolveTenantFromRequest(req: Request) {
   return resolveTenantByHost(requestHost(req));
+}
+
+export async function shouldBlockInactiveTenantHost(req: Request) {
+  const tenant = await lookupTenantByHost(requestHost(req));
+  if (!tenant) return false;
+  return tenant.status !== "active" || tenant.superadminStatus !== "active";
 }

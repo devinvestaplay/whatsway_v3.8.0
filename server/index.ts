@@ -53,6 +53,7 @@ import { createAdapter } from "@socket.io/redis-adapter";
 import { runStartupMigration } from "./startup-migration";
 import { capturePublicOriginMiddleware } from "./services/public-origin.ts";
 import { csrfMiddleware, csrfTokenEndpoint } from "./middlewares/csrf.middleware.ts";
+import { shouldBlockInactiveTenantHost } from "./services/tenant-domain.service";
 
 
 const app = express();
@@ -520,6 +521,49 @@ app.use(
   })
 );
 app.use(express.urlencoded({ extended: false, limit: '50mb' }));
+
+app.use(async (req, res, next) => {
+  try {
+    if (req.path === "/api/tenant/allow-domain") return next();
+
+    const blocked = await shouldBlockInactiveTenantHost(req);
+    if (!blocked) return next();
+
+    if (req.path.startsWith("/api")) {
+      return res.status(403).json({
+        error: "Partner domain is inactive.",
+        message: "This partner account or domain has been disabled by the platform admin.",
+      });
+    }
+
+    return res.status(403).type("html").send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Partner domain inactive</title>
+    <style>
+      body { margin: 0; font-family: Inter, Arial, sans-serif; color: #0f172a; background: #f8fafc; }
+      main { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+      section { max-width: 560px; border: 1px solid #e2e8f0; border-radius: 16px; background: #fff; padding: 32px; box-shadow: 0 20px 60px rgba(15, 23, 42, 0.08); }
+      h1 { margin: 0 0 12px; font-size: 28px; line-height: 1.2; }
+      p { margin: 0; color: #475569; line-height: 1.7; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section>
+        <h1>Partner domain inactive</h1>
+        <p>This partner account or domain has been disabled by the platform admin.</p>
+      </section>
+    </main>
+  </body>
+</html>`);
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.use("/uploads", express.static("uploads"));
 app.use("/uploads", express.static(path.join(process.cwd(), "public", "uploads")));
 
