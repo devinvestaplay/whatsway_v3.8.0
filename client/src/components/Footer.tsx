@@ -75,8 +75,14 @@ const Footer: React.FC = () => {
     queryFn: () => fetch("/api/brand-settings").then((res) => res.json()),
     staleTime: 5 * 60 * 1000,
   });
+  const { data: socialSetting } = useQuery<{ value: Record<string, string> }>({
+    queryKey: ["/api/cms/settings/social_links"],
+    queryFn: () => fetch("/api/cms/settings/social_links").then((res) => res.json()),
+    staleTime: 5 * 60 * 1000,
+  });
 
   const appName = brandSettings?.title || "WhatsWay";
+  const socialLinks = socialSetting?.value || {};
   const logo =
     brandSettings?.logo2 && brandSettings.logo2 !== "/uploads/null"
       ? brandSettings.logo2
@@ -146,11 +152,11 @@ const Footer: React.FC = () => {
             </div>
             <div className="mt-7 flex gap-3">
               {[
-                { icon: Twitter, label: "Twitter", href: "https://x.com" },
-                { icon: Linkedin, label: "LinkedIn", href: "https://linkedin.com" },
-                { icon: Instagram, label: "Instagram", href: "https://instagram.com" },
-                { icon: Facebook, label: "Facebook", href: "https://facebook.com" },
-              ].map((social) => (
+                { icon: Twitter, label: "Twitter", href: socialLinks.twitter || "https://x.com" },
+                { icon: Linkedin, label: "LinkedIn", href: socialLinks.linkedin || "https://linkedin.com" },
+                { icon: Instagram, label: "Instagram", href: socialLinks.instagram || "https://instagram.com" },
+                { icon: Facebook, label: "Facebook", href: socialLinks.facebook || "https://facebook.com" },
+              ].filter((social) => social.href).map((social) => (
                 <a
                   key={social.label}
                   href={social.href}

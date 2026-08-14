@@ -31,7 +31,6 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { AppSettings } from "@/types/types";
-import { LanguageSelector } from "./language-selector";
 import { HeaderDropdown } from "./header/HeaderDropdown";
 import { MobileHeaderMenu } from "./header/MobileHeaderMenu";
 import { headerMenuOrder, type HeaderMenuKey } from "./header/headerMenus";
@@ -49,8 +48,20 @@ const Header = () => {
     queryFn: () => fetch("/api/brand-settings").then((res) => res.json()),
     staleTime: 5 * 60 * 1000,
   });
+  const { data: announcementSetting } = useQuery<{ value: any }>({
+    queryKey: ["/api/cms/settings/announcement_bar"],
+    queryFn: () => fetch("/api/cms/settings/announcement_bar").then((res) => res.json()),
+    staleTime: 5 * 60 * 1000,
+  });
 
   const appName = brandSettings?.title || "WhatsWay";
+  const announcement = announcementSetting?.value || {};
+  const announcementEnabled = announcement.enabled !== false;
+  const announcementBadge = announcement.badge || "NEW LAUNCH";
+  const announcementText =
+    announcement.text || "Build AI Agents on WhatsApp that qualify leads, answer customers, and convert sales 24/7";
+  const announcementCtaText = announcement.ctaText || "Explore More";
+  const announcementCtaUrl = announcement.ctaUrl || "/ai-assistant";
   const username =
     `${user?.firstName || ""} ${user?.lastName || ""}`.trim() ||
     user?.username ||
@@ -93,19 +104,43 @@ const Header = () => {
   return (
     <>
     <header className="public-site-header fixed left-0 right-0 top-0 z-50 bg-white">
-      <div className="border-b border-green-200 bg-gradient-to-r from-green-100 via-lime-50 to-green-100">
-        <div className="mx-auto flex h-11 max-w-[1500px] items-center justify-center gap-4 px-4 text-center text-sm font-black text-slate-900 md:text-xl">
-          <span className="inline-flex items-center gap-2 rounded-full bg-green-500 px-3 py-1.5 text-xs font-black text-white shadow-lg shadow-green-500/25 md:text-sm">
+      {announcementEnabled && <div className="overflow-hidden border-b border-green-200 bg-gradient-to-r from-green-100 via-lime-50 to-green-100">
+        <div className="launch-bar-track flex h-14 min-w-max items-center gap-5 px-4 text-sm font-black text-slate-900 sm:h-14 sm:min-w-0 sm:justify-center sm:text-xl">
+          <span className="inline-flex shrink-0 items-center gap-2 rounded-full bg-green-600 px-4 py-2 text-xs font-black text-white shadow-lg shadow-green-600/25 sm:text-sm">
             <span className="h-2 w-2 rounded-full bg-white" />
-            NEW LAUNCH
+            {announcementBadge}
           </span>
-          <span className="hidden sm:inline">Build AI Agents on WhatsApp that qualify and convert 24/7</span>
-          <Link href="/ai-assistant" className="inline-flex items-center gap-2 text-sm font-black text-green-600 md:text-lg">
-            Explore More
+          <span className="shrink-0 whitespace-nowrap">{announcementText}</span>
+          <Link href={announcementCtaUrl} className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap text-sm font-black text-green-700 sm:text-lg">
+            {announcementCtaText}
+            <ArrowRight className="h-4 w-4" />
+          </Link>
+          <span className="inline-flex shrink-0 items-center gap-2 rounded-full bg-green-600 px-4 py-2 text-xs font-black text-white shadow-lg shadow-green-600/25 sm:hidden">
+            <span className="h-2 w-2 rounded-full bg-white" />
+            {announcementBadge}
+          </span>
+          <span className="shrink-0 whitespace-nowrap sm:hidden">{announcementText}</span>
+          <Link href={announcementCtaUrl} className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap text-sm font-black text-green-700 sm:hidden">
+            {announcementCtaText}
             <ArrowRight className="h-4 w-4" />
           </Link>
         </div>
-      </div>
+        <style>{`
+          @media (max-width: 639px) {
+            .launch-bar-track {
+              width: max-content;
+              animation: launch-bar-scroll 18s linear infinite;
+            }
+            @keyframes launch-bar-scroll {
+              from { transform: translateX(0); }
+              to { transform: translateX(-50%); }
+            }
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .launch-bar-track { animation: none; transform: none; }
+          }
+        `}</style>
+      </div>}
 
       <div className={`border-b transition-all duration-300 ${isScrolled ? "border-slate-200 shadow-lg shadow-slate-950/[0.04]" : "border-slate-200"}`}>
         <div className="mx-auto max-w-[1500px] px-4 sm:px-6 lg:px-8">
@@ -131,9 +166,6 @@ const Header = () => {
                 <Globe2 className="h-4 w-4" />
                 <span>Eng</span>
                 <ChevronDown className="h-3.5 w-3.5" />
-              </div>
-              <div className="max-w-[130px] overflow-hidden">
-                <LanguageSelector />
               </div>
             </nav>
 

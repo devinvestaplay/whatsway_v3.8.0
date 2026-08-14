@@ -337,18 +337,6 @@ const sidebarItemsCategories = [
         color: "text-blue-500",
     },
     {
-        name: "White Label",
-        icon: Palette,
-        path: "/white-label",
-        color: "text-emerald-600",
-    },
-    {
-        name: "CMS",
-        icon: Image,
-        path: "/cms",
-        color: "text-sky-600",
-    },
-    {
         name: "navigation.master_campaigns",
         icon: Megaphone,
         path: "/campaigns",
@@ -423,6 +411,18 @@ const sidebarItemsCategories = [
         icon: GiUpgrade,
         path: "/app-update",
         color: "text-emerald-600",
+    },
+    {
+        name: "White Label",
+        icon: Palette,
+        path: "/white-label",
+        color: "text-emerald-600",
+    },
+    {
+        name: "CMS",
+        icon: Image,
+        path: "/cms",
+        color: "text-sky-600",
     },
 ];
 

@@ -220,7 +220,7 @@ const Home = () => {
                 AI-powered WhatsApp marketing platform
               </div>
               <h1 className="mx-auto max-w-4xl text-4xl font-black leading-[1.04] tracking-normal text-slate-950 sm:text-6xl lg:mx-0 lg:text-7xl">
-                5X your revenue with the power of WhatsApp
+                7X your revenue with the power of WhatsApp
               </h1>
               <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-slate-600 lg:mx-0">
                 Broadcast, automate, engage, and sell with {appName}. Run

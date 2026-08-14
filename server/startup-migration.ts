@@ -1009,6 +1009,47 @@ const steps: MigrationStep[] = [
   },
 
   {
+    description: "Create marketing CMS settings and entries tables (if not exists)",
+    sql: `
+      CREATE TABLE IF NOT EXISTS marketing_cms_settings (
+        key VARCHAR(120) PRIMARY KEY,
+        value JSONB NOT NULL DEFAULT '{}'::jsonb,
+        updated_by VARCHAR REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS marketing_cms_entries (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        type VARCHAR(80) NOT NULL,
+        title VARCHAR(220) NOT NULL,
+        subtitle VARCHAR(220),
+        body TEXT,
+        image_url TEXT,
+        link_url TEXT,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        status VARCHAR(20) NOT NULL DEFAULT 'active',
+        display_order INTEGER DEFAULT 0,
+        created_by VARCHAR REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS marketing_cms_entries_type_idx ON marketing_cms_entries(type);
+    `,
+  },
+
+  {
+    description: "Seed default marketing CMS settings",
+    sql: `
+      INSERT INTO marketing_cms_settings (key, value)
+      VALUES
+        ('announcement_bar', '{"enabled":true,"badge":"NEW LAUNCH","text":"Build AI Agents on WhatsApp that qualify leads, answer customers, and convert sales 24/7","ctaText":"Explore More","ctaUrl":"/ai-assistant"}'::jsonb),
+        ('social_links', '{"twitter":"https://x.com","linkedin":"https://linkedin.com","instagram":"https://instagram.com","facebook":"https://facebook.com"}'::jsonb)
+      ON CONFLICT (key) DO NOTHING;
+    `,
+  },
+
+  {
     description:
       "Convert all naive timestamp columns to timestamptz (interpret existing values as UTC)",
     sql: `

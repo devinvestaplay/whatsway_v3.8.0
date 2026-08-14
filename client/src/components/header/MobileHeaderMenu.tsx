@@ -1,6 +1,4 @@
 import { Link } from "wouter";
-import { Languages } from "lucide-react";
-import { LanguageSelector } from "../language-selector";
 import {
   headerMenuLabels,
   headerMenuOrder,
@@ -38,12 +36,6 @@ export function MobileHeaderMenu() {
       <Link href="/careers" className="rounded-md px-3 py-3 text-sm font-black text-slate-900 hover:bg-slate-50">
         Partner
       </Link>
-      <div className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-3">
-        <span className="inline-flex items-center gap-2 text-sm font-black text-slate-900">
-          <Languages className="h-4 w-4" /> Language
-        </span>
-        <LanguageSelector />
-      </div>
     </div>
   );
 }
