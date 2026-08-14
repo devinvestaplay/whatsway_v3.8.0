@@ -1061,17 +1061,6 @@ const steps: MigrationStep[] = [
   },
 
   {
-    description: "Seed default marketing CMS settings",
-    sql: `
-      INSERT INTO marketing_cms_settings (key, value)
-      VALUES
-        ('announcement_bar', '{"enabled":true,"badge":"NEW LAUNCH","text":"Build AI Agents on WhatsApp that qualify leads, answer customers, and convert sales 24/7","ctaText":"Explore More","ctaUrl":"/ai-assistant"}'::jsonb),
-        ('social_links', '{"twitter":"https://x.com","linkedin":"https://linkedin.com","instagram":"https://instagram.com","facebook":"https://facebook.com"}'::jsonb)
-      ON CONFLICT (key) DO NOTHING;
-    `,
-  },
-
-  {
     description: "Add tenant scope to brand and marketing CMS tables",
     sql: `
       ALTER TABLE panel_config ADD COLUMN IF NOT EXISTS tenant_domain_id VARCHAR REFERENCES white_label_domains(id) ON DELETE CASCADE;
@@ -1096,6 +1085,31 @@ const steps: MigrationStep[] = [
       CREATE UNIQUE INDEX IF NOT EXISTS marketing_cms_settings_key_tenant_unique
         ON marketing_cms_settings(key, COALESCE(tenant_domain_id, ''));
       CREATE INDEX IF NOT EXISTS marketing_cms_settings_tenant_idx ON marketing_cms_settings(tenant_domain_id);
+    `,
+  },
+
+  {
+    description: "Seed default marketing CMS settings",
+    sql: `
+      INSERT INTO marketing_cms_settings (key, value, tenant_domain_id)
+      SELECT
+        'announcement_bar',
+        '{"enabled":true,"badge":"NEW LAUNCH","text":"Build AI Agents on WhatsApp that qualify leads, answer customers, and convert sales 24/7","ctaText":"Explore More","ctaUrl":"/ai-assistant"}'::jsonb,
+        NULL
+      WHERE NOT EXISTS (
+        SELECT 1 FROM marketing_cms_settings
+        WHERE key='announcement_bar' AND tenant_domain_id IS NULL
+      );
+
+      INSERT INTO marketing_cms_settings (key, value, tenant_domain_id)
+      SELECT
+        'social_links',
+        '{"twitter":"https://x.com","linkedin":"https://linkedin.com","instagram":"https://instagram.com","facebook":"https://facebook.com"}'::jsonb,
+        NULL
+      WHERE NOT EXISTS (
+        SELECT 1 FROM marketing_cms_settings
+        WHERE key='social_links' AND tenant_domain_id IS NULL
+      );
     `,
   },
 
