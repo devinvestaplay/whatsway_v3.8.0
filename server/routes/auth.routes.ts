@@ -17,7 +17,7 @@
 
 import { Request, Response, Router } from "express";
 import { diployLogger, HTTP_STATUS, DIPLOY_BRAND } from "@diploy/core";
-import { db } from "../db";
+import { db, pool } from "../db";
 import { users, userActivityLogs } from "@shared/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -28,6 +28,7 @@ import country from "../config/country.json"
 import { sendOTPEmail } from "../services/email.service"
 import { otpVerifications } from "@shared/schema";
 import { createUser } from "../controllers/user.controller";
+import { resolveTenantFromRequest } from "../services/tenant-domain.service";
 
 
 const router = Router();
@@ -44,6 +45,32 @@ const loginSchema = z.object({
   password: z.string().min(1, "Password is required"),
 
 });
+
+async function canLoginOnCurrentDomain(req: Request, user: { id: string; role?: string | null }) {
+  const tenant = await resolveTenantFromRequest(req);
+  if (!tenant) return true;
+
+  if (user.role === "platform_admin") return false;
+
+  const ancestry = await pool.query(
+    `WITH RECURSIVE user_ancestry AS (
+       SELECT id, created_by
+       FROM users
+       WHERE id = $1
+       UNION ALL
+       SELECT parent.id, parent.created_by
+       FROM users parent
+       INNER JOIN user_ancestry child ON parent.id = child.created_by
+     )
+     SELECT 1
+     FROM user_ancestry
+     WHERE id = $2
+     LIMIT 1`,
+    [user.id, tenant.superadminId]
+  );
+
+  return Boolean(ancestry.rows[0]);
+}
 
 // Login endpoint
 router.post("/login", validateRequest(loginSchema), async (req, res) => {
@@ -90,6 +117,12 @@ router.post("/login", validateRequest(loginSchema), async (req, res) => {
     // Verify password
     const isValidPassword = await bcrypt.compare(password, user.password);
     if (!isValidPassword) {
+      return res.status(401).json({ error: "Invalid username or password" });
+    }
+
+    const isAllowedOnDomain = await canLoginOnCurrentDomain(req, user);
+    if (!isAllowedOnDomain) {
+      console.warn("[auth] login attempt blocked: account does not belong to request domain");
       return res.status(401).json({ error: "Invalid username or password" });
     }
 
@@ -203,6 +236,13 @@ router.get("/me", async (req, res) => {
     return res.status(404).json({ error: "User not found" });
   }
 
+  const isAllowedOnDomain = await canLoginOnCurrentDomain(req, currentUser);
+  if (!isAllowedOnDomain) {
+    (req as any).session?.destroy?.(() => {});
+    res.clearCookie("connect.sid");
+    return res.status(401).json({ error: "Not authenticated" });
+  }
+
   // Remove password from response and include superadmin impersonation metadata.
   const { password, ...userData } = currentUser;
   const session = (req as any).session;
@@ -214,8 +254,16 @@ router.get("/me", async (req, res) => {
 });
 
 // Check if authenticated (for frontend)
-router.get("/check", (req, res) => {
+router.get("/check", async (req, res) => {
   const user = (req as any).session?.user;
+  if (user) {
+    const isAllowedOnDomain = await canLoginOnCurrentDomain(req, user);
+    if (!isAllowedOnDomain) {
+      (req as any).session?.destroy?.(() => {});
+      res.clearCookie("connect.sid");
+      return res.json({ authenticated: false, user: null });
+    }
+  }
   res.json({ authenticated: !!user, user });
 });
 
