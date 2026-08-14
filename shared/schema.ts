@@ -1616,6 +1616,23 @@ export const whiteLabelPartnerClients = pgTable("white_label_partner_clients", {
   partnerClientUnique: uniqueIndex("white_label_partner_clients_unique").on(table.partnerId, table.clientId),
 }));
 
+export const whiteLabelDomains = pgTable("white_label_domains", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  superadminId: varchar("superadmin_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  domain: text("domain").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("pending"),
+  verificationToken: varchar("verification_token", { length: 120 }).notNull(),
+  sslStatus: varchar("ssl_status", { length: 20 }).notNull().default("pending"),
+  notes: text("notes"),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }),
+  createdBy: varchar("created_by").references((): any => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+}, (table) => ({
+  domainUnique: uniqueIndex("white_label_domains_domain_unique").on(table.domain),
+  superadminIdx: index("white_label_domains_superadmin_idx").on(table.superadminId),
+}));
+
 export const whiteLabelWorkspaceAddons = pgTable("white_label_workspace_addons", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   workspaceId: varchar("workspace_id").notNull().references(() => channels.id, { onDelete: "cascade" }),

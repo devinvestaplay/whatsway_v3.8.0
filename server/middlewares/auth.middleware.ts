@@ -70,6 +70,8 @@ export const requireRole = (...roles: string[]) => {
 // Narrow superadmin gate for operations that must never be reachable by any
 // tenant-level role (e.g. cross-tenant configuration, global webhook configs).
 export const requireSuperadmin = requireRole("superadmin");
+export const requirePlatformAdmin = requireRole("platform_admin");
+export const requirePlatformOrSuperadmin = requireRole("platform_admin", "superadmin");
 
 // Implicit permissions granted by role. Evaluated explicitly inside
 // `requirePermission` so the middleware always runs an actual permission
@@ -140,7 +142,7 @@ export const requirePermission = (...permissions: string[]) => {
       const stored = (await storage.getPermissions(user.id)) ?? [];
       const effective = new Set<string>(stored);
 
-      if (user.role === "admin") {
+      if (user.role === "platform_admin" || user.role === "admin") {
         for (const p of ADMIN_IMPLICIT_PERMISSIONS) effective.add(p);
       }
 

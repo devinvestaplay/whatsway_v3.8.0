@@ -10,6 +10,7 @@
  */
 
 export const Role = {
+  PLATFORM_ADMIN: "platform_admin",
   SUPERADMIN: "superadmin",
   ADMIN: "admin",
   TEAM: "team",
@@ -21,6 +22,7 @@ export const Role = {
 export type Role = (typeof Role)[keyof typeof Role];
 
 export const ROLE_VALUES: Role[] = [
+  Role.PLATFORM_ADMIN,
   Role.SUPERADMIN,
   Role.ADMIN,
   Role.TEAM,
@@ -34,7 +36,7 @@ export function isRole(value: unknown): value is Role {
 }
 
 /** Roles that represent tenant owners (top-level accounts). */
-export const OWNER_ROLES: Role[] = [Role.SUPERADMIN, Role.ADMIN];
+export const OWNER_ROLES: Role[] = [Role.PLATFORM_ADMIN, Role.SUPERADMIN, Role.ADMIN];
 
 /** Status values used by `users.status`. */
 export const UserStatus = {

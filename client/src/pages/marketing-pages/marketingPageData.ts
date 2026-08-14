@@ -1,6 +1,6 @@
 import type { MarketingPageData } from "./MarketingPageLayout";
 
-export const marketingPageData = {
+const defaultMarketingPageData = {
   productWhatsappBusinessApi: { eyebrow: "Product", category: "WhatsApp Business API", title: "WhatsApp Business API for WhatsApp growth", description: "Connect your business to the official WhatsApp API and manage messaging, templates, webhooks, and customer journeys from one platform.", highlights: ["Launch faster with a focused workflow", "Use WhatsApp campaigns, automation, and live chat together", "Track outcomes and improve every customer journey"], useCases: ["Capture and qualify leads", "Automate customer follow-ups", "Measure conversations and conversions", "Route replies to the right team"] },
   productWhatsappMarketing: { eyebrow: "Product", category: "WhatsApp Marketing", title: "WhatsApp Marketing for WhatsApp growth", description: "Broadcast campaigns, automate replies, segment audiences, and grow revenue through WhatsApp marketing workflows.", highlights: ["Launch faster with a focused workflow", "Use WhatsApp campaigns, automation, and live chat together", "Track outcomes and improve every customer journey"], useCases: ["Capture and qualify leads", "Automate customer follow-ups", "Measure conversations and conversions", "Route replies to the right team"] },
   productAiAdsManager: { eyebrow: "Product", category: "AI Ads Manager", title: "AI Ads Manager for WhatsApp growth", description: "Capture high-intent leads from ads and move them into automated WhatsApp conversations faster.", highlights: ["Launch faster with a focused workflow", "Use WhatsApp campaigns, automation, and live chat together", "Track outcomes and improve every customer journey"], useCases: ["Capture and qualify leads", "Automate customer follow-ups", "Measure conversations and conversions", "Route replies to the right team"] },
@@ -46,4 +46,17 @@ export const marketingPageData = {
   integrationsLeadsquared: { eyebrow: "Integrations", category: "LeadSquared", title: "LeadSquared for WhatsApp growth", description: "Sync CRM leads and trigger WhatsApp follow-ups from sales workflows.", highlights: ["Launch faster with a focused workflow", "Use WhatsApp campaigns, automation, and live chat together", "Track outcomes and improve every customer journey"], useCases: ["Capture and qualify leads", "Automate customer follow-ups", "Measure conversations and conversions", "Route replies to the right team"] },
   integrationsIntegrately: { eyebrow: "Integrations", category: "Integrately", title: "Integrately for WhatsApp growth", description: "Build no-code automations that connect WhatsApp actions with your favorite apps.", highlights: ["Launch faster with a focused workflow", "Use WhatsApp campaigns, automation, and live chat together", "Track outcomes and improve every customer journey"], useCases: ["Capture and qualify leads", "Automate customer follow-ups", "Measure conversations and conversions", "Route replies to the right team"] },
   integrationsWebhookApis: { eyebrow: "Integrations", category: "Webhook APIs", title: "Webhook APIs for WhatsApp growth", description: "Send and receive WhatsApp events through webhook-powered backend integrations.", highlights: ["Launch faster with a focused workflow", "Use WhatsApp campaigns, automation, and live chat together", "Track outcomes and improve every customer journey"], useCases: ["Capture and qualify leads", "Automate customer follow-ups", "Measure conversations and conversions", "Route replies to the right team"] },
-} satisfies Record<string, MarketingPageData>;
+} satisfies Record<string, Omit<MarketingPageData, "pageKey">>;
+
+export const marketingPageData = Object.fromEntries(
+  Object.entries(defaultMarketingPageData).map(([pageKey, page]) => [
+    pageKey,
+    { ...page, pageKey },
+  ])
+) as Record<keyof typeof defaultMarketingPageData, MarketingPageData>;
+
+export const marketingPageOptions = Object.entries(marketingPageData).map(([key, page]) => ({
+  key,
+  label: `${page.eyebrow} - ${page.category}`,
+  title: page.title,
+}));

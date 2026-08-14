@@ -10,6 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AppSettings } from "@/types/types";
 
 export type MarketingPageData = {
+  pageKey?: string;
   eyebrow: string;
   title: string;
   description: string;
@@ -30,6 +31,15 @@ export function MarketingPageLayout({ page }: MarketingPageProps) {
   });
 
   const appName = brandSettings?.title || "WhatsWay";
+  const { data: cmsPagesSetting } = useQuery<{ value: Record<string, Partial<MarketingPageData>> }>({
+    queryKey: ["/api/cms/settings/marketing_pages"],
+    queryFn: () => fetch("/api/cms/settings/marketing_pages").then((res) => res.json()),
+    staleTime: 5 * 60 * 1000,
+  });
+  const cmsPage = page.pageKey ? cmsPagesSetting?.value?.[page.pageKey] : null;
+  const displayPage = { ...page, ...(cmsPage || {}) };
+  const highlights = Array.isArray(displayPage.highlights) ? displayPage.highlights : page.highlights;
+  const useCases = Array.isArray(displayPage.useCases) ? displayPage.useCases : page.useCases;
 
   return (
     <div className="bg-white text-slate-950">
@@ -38,13 +48,13 @@ export function MarketingPageLayout({ page }: MarketingPageProps) {
           <div>
             <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-white px-4 py-2 text-sm font-black text-emerald-700 shadow-sm">
               <Sparkles className="h-4 w-4" />
-              {page.eyebrow}
+              {displayPage.eyebrow}
             </div>
             <h1 className="mt-6 max-w-4xl text-4xl font-black leading-tight tracking-normal sm:text-6xl">
-              {page.title}
+              {displayPage.title}
             </h1>
             <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
-              {page.description}
+              {displayPage.description}
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Link href="/signup" className="inline-flex items-center justify-center rounded-md bg-green-500 px-7 py-4 text-base font-black text-white shadow-lg shadow-green-500/20 transition hover:bg-green-600">
@@ -61,13 +71,13 @@ export function MarketingPageLayout({ page }: MarketingPageProps) {
             <div className="rounded-[1.5rem] bg-slate-950 p-6 text-white">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-300">{page.category}</p>
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-300">{displayPage.category}</p>
                   <h2 className="mt-2 text-2xl font-black">{appName}</h2>
                 </div>
                 <MessageSquare className="h-8 w-8 text-emerald-300" />
               </div>
               <div className="mt-8 grid gap-3">
-                {page.highlights.slice(0, 3).map((highlight) => (
+                {highlights.slice(0, 3).map((highlight) => (
                   <div key={highlight} className="flex items-start gap-3 rounded-2xl bg-white/10 p-4">
                     <CheckCircle2 className="mt-0.5 h-5 w-5 flex-none text-emerald-300" />
                     <span className="text-sm leading-6 text-slate-100">{highlight}</span>
@@ -85,14 +95,14 @@ export function MarketingPageLayout({ page }: MarketingPageProps) {
             <div>
               <p className="text-sm font-black uppercase tracking-[0.18em] text-emerald-600">What you can build</p>
               <h2 className="mt-4 text-3xl font-black tracking-normal sm:text-5xl">
-                A focused page for {page.category.toLowerCase()}.
+                A focused page for {displayPage.category.toLowerCase()}.
               </h2>
               <p className="mt-5 text-lg leading-8 text-slate-600">
                 This page is intentionally separated so its copy, sections, SEO, screenshots, and CTAs can evolve without affecting other menu pages.
               </p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              {page.useCases.map((useCase) => (
+              {useCases.map((useCase) => (
                 <div key={useCase} className="rounded-3xl border border-slate-100 bg-white p-6 shadow-lg shadow-slate-950/5">
                   <BarChart3 className="h-7 w-7 text-emerald-600" />
                   <p className="mt-4 text-lg font-black text-slate-950">{useCase}</p>

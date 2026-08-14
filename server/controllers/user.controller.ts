@@ -28,6 +28,7 @@ import { resolveUserPermissions } from "server/utils/role-permissions";
 import { z } from "zod";
 import { ensureDefaultWorkspaceForClient } from "../services/workspace.service";
 import { allocatePublicClientId, shouldAssignPublicClientId } from "../services/client-id.service";
+import { resolveTenantFromRequest } from "../services/tenant-domain.service";
 
 // Validation schema for user self/admin updates. Applied before pickAllowed so
 // that malformed values (wrong types, bad email, over-long strings) are
@@ -439,6 +440,7 @@ export const createUser = async (req: Request, res: Response) => {
     }
 
     // 3️⃣ Create new user
+    const tenant = await resolveTenantFromRequest(req);
     const hashedPassword = await bcrypt.hash(password, 10);
     const assignedRole = role || "admin";
     const publicClientId = shouldAssignPublicClientId(assignedRole)
@@ -459,6 +461,7 @@ export const createUser = async (req: Request, res: Response) => {
         permissions: defaultPermissions,
         isEmailVerified: false,
         status: "inactive",
+        createdBy: tenant?.superadminId || null,
       })
       .returning();
 
@@ -868,7 +871,16 @@ export const deleteUser = async (req: Request, res: Response) => {
 
 export const createUserSuperadmin = async (req: Request, res: Response) => {
   try {
-    const { username, password, email, firstName, lastName } = req.body;
+    const caller = (req as any).user || (req as any).session?.user;
+    const { username, password, email, firstName, lastName, role } = req.body;
+    const requestedRole = role === "superadmin" ? "superadmin" : "admin";
+
+    if (requestedRole === "superadmin" && caller?.role !== "platform_admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Only platform admin can create superadmin profiles.",
+      });
+    }
 
     if (!username || !password || !email) {
       return res.status(400).json({
@@ -893,7 +905,15 @@ export const createUserSuperadmin = async (req: Request, res: Response) => {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const publicClientId = await allocatePublicClientId();
+    const publicClientId = shouldAssignPublicClientId(requestedRole)
+      ? await allocatePublicClientId()
+      : null;
+    const createdBy =
+      requestedRole === "superadmin"
+        ? caller?.id || null
+        : caller?.role === "superadmin"
+          ? caller.id
+          : null;
 
     // Create user
     const newUser = await db
@@ -904,17 +924,20 @@ export const createUserSuperadmin = async (req: Request, res: Response) => {
         email,
         firstName,
         lastName,
-        role: "admin",
+        role: requestedRole,
         publicClientId,
         permissions: defaultPermissions,
         isEmailVerified: true,
+        createdBy,
       })
       .returning();
 
     const user = newUser[0];
 
     try {
-      await ensureDefaultWorkspaceForClient(user);
+      if (requestedRole === "admin") {
+        await ensureDefaultWorkspaceForClient(user);
+      }
     } catch (workspaceError) {
       console.error("[createUserSuperadmin] Failed to create default workspace:", workspaceError);
     }

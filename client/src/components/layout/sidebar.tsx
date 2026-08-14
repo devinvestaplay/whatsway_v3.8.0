@@ -50,7 +50,8 @@ import {
   ChevronDown,
   Wallet,
   Palette,
-  Image
+  Image,
+  ShieldCheck
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChannelSwitcher } from "@/components/channel-switcher";
@@ -78,7 +79,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 
-type Role = "superadmin" | "admin" | "user" | "team";
+type Role = "platform_admin" | "superadmin" | "admin" | "user" | "team";
 
 interface NavItem {
     href: string;
@@ -319,6 +320,13 @@ function getNavItems(role: string): NavItem[] {
 
 const sidebarItemsCategories = [
     {
+        name: "Platform Admin",
+        icon: ShieldCheck,
+        path: "/platform",
+        color: "text-emerald-700",
+        platformOnly: true,
+    },
+    {
         name: "navigation.dashboard",
         icon: LayoutDashboard,
         path: "/dashboard",
@@ -433,6 +441,7 @@ export default function Sidebar() {
     const { user, logout } = useAuth();
     const { t } = useTranslation();
     const [isMobileOpen, setIsMobileOpen] = useState(false);
+    const isPlatform = user?.role === "platform_admin";
     const isSuper = user?.role === "superadmin";
     const isAdmin = user?.role === "admin";
     const { toast } = useToast();
@@ -497,8 +506,8 @@ useEffect(() => {
 
         const role = user.role as Role;
 
-        // SUPERADMIN sees everything
-        if (role === "superadmin") return true;
+        // PLATFORM ADMIN and SUPERADMIN see privileged navigation.
+        if (role === "platform_admin" || role === "superadmin") return true;
 
         // TEAM role must ONLY use permissions — but allow alwaysVisible items
         if (role === "team") {
@@ -734,8 +743,10 @@ useEffect(() => {
                     )}
 
                     <nav className="flex-1 px-4 py-4 space-y-4 overflow-y-auto">
-                        {isSuper
-                            ? sidebarItemsCategories.map((item) =>
+                        {isPlatform || isSuper
+                            ? sidebarItemsCategories
+                              .filter((item: any) => isPlatform ? item.platformOnly || item.path === "/dashboard" : !item.platformOnly)
+                              .map((item) =>
                                 renderLink(
                                     t(item.name),
                                     item.icon,

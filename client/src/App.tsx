@@ -109,6 +109,7 @@ import AbandonedCarts from "./pages/ecommerce/AbandonedCarts";
 import CodOrdersPage from "@/pages/ecommerce/CodOrders";
 import WhiteLabel from "@/pages/WhiteLabel";
 import CmsLogos from "@/pages/CmsLogos";
+import PlatformAdmin from "@/pages/PlatformAdmin";
 import { marketingRoutes } from "@/pages/marketing-pages/routes";
 
 
@@ -118,6 +119,7 @@ import { marketingRoutes } from "@/pages/marketing-pages/routes";
 // means authenticated-only (no specific permission required).
 const ROUTE_PERMISSIONS: Record<string, string> = {
   "/dashboard": "",
+  "/platform": "",
   "/contacts": "contacts.view",
   "/users": "",
   "/channels-management": "",
@@ -231,7 +233,7 @@ function PermissionRoute({
   const hasPermission = (permission?: string) => {
     if (!permission) return true;
     if (!user?.permissions) return false;
-    if (user.role === "superadmin") return true;
+    if (user.role === "platform_admin" || user.role === "superadmin") return true;
 
     const perms = Array.isArray(user.permissions)
       ? user.permissions
@@ -363,6 +365,12 @@ function ProtectedRoutes() {
         <Switch>
           <Route path="/dashboard">
             <Dashboard />
+          </Route>
+          <Route path="/platform">
+            <PermissionRoute
+              component={PlatformAdmin}
+              requiredRoles={["platform_admin"]}
+            />
           </Route>
           <Route path="/contacts">
             <PermissionRoute
@@ -602,7 +610,7 @@ function ProtectedRoutes() {
 // Helper function to check route permissions
 function hasRoutePermission(permission: string, user: any) {
   if (!user?.permissions) return false;
-  if (user.role === "superadmin") return true;
+  if (user.role === "platform_admin" || user.role === "superadmin") return true;
 
   const perms = Array.isArray(user.permissions)
     ? user.permissions

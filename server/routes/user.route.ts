@@ -15,7 +15,7 @@
  * ============================================================
  */
 
-import { requireAuth, requireRole } from "server/middlewares/auth.middleware";
+import { requireAuth, requirePlatformOrSuperadmin, requireRole } from "server/middlewares/auth.middleware";
 import { diployLogger, HTTP_STATUS, DIPLOY_BRAND } from "@diploy/core";
 import {
   getAllUsers,
@@ -38,8 +38,8 @@ app.get("/api/admin/users/:id", requireAuth, getUserById);
 // The superadmin "create user" panel uses createUserSuperadmin below.
 // /api/users/create is preserved as a superadmin-only alias for
 // backwards compatibility with older API clients.
-app.post("/api/admin/users/create", requireAuth, requireRole("superadmin"), createUserSuperadmin);
-app.post("/api/users/create", createUserSuperadmin);
+app.post("/api/admin/users/create", requireAuth, requirePlatformOrSuperadmin, createUserSuperadmin);
+app.post("/api/users/create", requireAuth, requirePlatformOrSuperadmin, createUserSuperadmin);
 app.post("/api/users/verifyEmail", verifyEmailOTP);
 app.put("/api/admin/users/bulk-status", requireAuth, bulkUpdateUserStatus);
 app.put("/api/users/:id", requireAuth, updateUser);

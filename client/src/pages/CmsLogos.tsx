@@ -7,6 +7,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { marketingPageData, marketingPageOptions } from "@/pages/marketing-pages/marketingPageData";
+import type { MarketingPageData } from "@/pages/marketing-pages/MarketingPageLayout";
 
 type CmsLogo = {
   id: string;
@@ -30,10 +32,11 @@ type CmsEntry = {
   display_order: number;
 };
 
-type CmsSection = "announcement" | "logos" | "social" | "case_study" | "review_feedback";
+type CmsSection = "announcement" | "pages" | "logos" | "social" | "case_study" | "review_feedback";
 
 const sections: Array<{ key: CmsSection; label: string; helper: string; icon: any }> = [
   { key: "announcement", label: "Top Announcement Bar", helper: "Header line above the public website navigation.", icon: Megaphone },
+  { key: "pages", label: "Marketing Pages", helper: "Hero copy, page category, highlights, and use-case cards.", icon: FileText },
   { key: "logos", label: "Partner Logos", helper: "Founder and trusted-brand logo strips across marketing pages.", icon: Image },
   { key: "social", label: "Social Media Links", helper: "Footer social platform links.", icon: Link2 },
   { key: "case_study", label: "Case Studies", helper: "Customer stories shown on case-study sections/pages.", icon: FileText },
@@ -77,6 +80,15 @@ const defaultSocialLinks = {
   facebook: "https://facebook.com",
 };
 
+const emptyPageDraft = {
+  eyebrow: "",
+  category: "",
+  title: "",
+  description: "",
+  highlights: "",
+  useCases: "",
+};
+
 function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return <textarea {...props} className={`min-h-24 w-full rounded-md border px-3 py-2 text-sm outline-none focus:border-emerald-700 ${props.className || ""}`} />;
 }
@@ -86,6 +98,8 @@ export default function CmsLogos() {
   const [activeSection, setActiveSection] = useState<CmsSection>("announcement");
   const [logoForm, setLogoForm] = useState(emptyLogoForm);
   const [entryForm, setEntryForm] = useState(emptyEntryForm);
+  const [selectedPageKey, setSelectedPageKey] = useState(marketingPageOptions[0]?.key || "");
+  const [pageDraft, setPageDraft] = useState(emptyPageDraft);
 
   const { data: logosData, isLoading: logosLoading } = useQuery<{ rows: CmsLogo[] }>({
     queryKey: ["/api/superadmin/cms/logos"],
@@ -110,6 +124,7 @@ export default function CmsLogos() {
     ...defaultSocialLinks,
     ...(settingsData?.rows?.find((row) => row.key === "social_links")?.value || {}),
   };
+  const marketingPages = (settingsData?.rows?.find((row) => row.key === "marketing_pages")?.value || {}) as Record<string, Partial<MarketingPageData>>;
 
   const [announcementDraft, setAnnouncementDraft] = useState(defaultAnnouncement);
   const [socialDraft, setSocialDraft] = useState(defaultSocialLinks);
@@ -118,6 +133,21 @@ export default function CmsLogos() {
     setAnnouncementDraft(announcement);
     setSocialDraft(socialLinks);
   }, [settingsData]);
+
+  useEffect(() => {
+    const fallback = marketingPageData[selectedPageKey as keyof typeof marketingPageData];
+    if (!fallback) return;
+    const cmsPage = marketingPages[selectedPageKey] || {};
+    const merged = { ...fallback, ...cmsPage };
+    setPageDraft({
+      eyebrow: merged.eyebrow || "",
+      category: merged.category || "",
+      title: merged.title || "",
+      description: merged.description || "",
+      highlights: (merged.highlights || []).join("\n"),
+      useCases: (merged.useCases || []).join("\n"),
+    });
+  }, [selectedPageKey, settingsData]);
 
   const saveSetting = useMutation({
     mutationFn: ({ key, value }: { key: string; value: Record<string, any> }) =>
@@ -199,6 +229,31 @@ export default function CmsLogos() {
   const logos = logosData?.rows ?? [];
   const entries = (entriesData?.rows ?? []).filter((entry) => entry.type === activeSection);
   const entryLabel = activeSection === "case_study" ? "Case Study" : "Review Feedback";
+  const selectedPageOption = marketingPageOptions.find((page) => page.key === selectedPageKey);
+  const selectedPageFallback = marketingPageData[selectedPageKey as keyof typeof marketingPageData];
+
+  const saveMarketingPage = () => {
+    if (!selectedPageKey) return;
+    const nextPages = {
+      ...marketingPages,
+      [selectedPageKey]: {
+        eyebrow: pageDraft.eyebrow,
+        category: pageDraft.category,
+        title: pageDraft.title,
+        description: pageDraft.description,
+        highlights: pageDraft.highlights.split("\n").map((item) => item.trim()).filter(Boolean),
+        useCases: pageDraft.useCases.split("\n").map((item) => item.trim()).filter(Boolean),
+      },
+    };
+    saveSetting.mutate({ key: "marketing_pages", value: nextPages });
+  };
+
+  const resetMarketingPage = () => {
+    if (!selectedPageKey) return;
+    const nextPages = { ...marketingPages };
+    delete nextPages[selectedPageKey];
+    saveSetting.mutate({ key: "marketing_pages", value: nextPages });
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 p-6">
@@ -215,7 +270,7 @@ export default function CmsLogos() {
           </div>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-5">
+        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
           {sections.map(({ key, label, helper, icon: Icon }) => (
             <button
               key={key}
@@ -284,6 +339,59 @@ export default function CmsLogos() {
               </Button>
             </CardContent>
           </Card>
+        )}
+
+        {activeSection === "pages" && (
+          <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
+            <Card>
+              <CardHeader>
+                <CardTitle>Choose Page To Manage</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <select className="h-11 w-full rounded-md border bg-white px-3 text-sm" value={selectedPageKey} onChange={(event) => setSelectedPageKey(event.target.value)}>
+                  {marketingPageOptions.map((page) => <option key={page.key} value={page.key}>{page.label}</option>)}
+                </select>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs font-black uppercase text-slate-500">Changing</p>
+                  <p className="mt-1 font-black text-slate-950">{selectedPageOption?.label}</p>
+                  <p className="mt-2 text-xs text-slate-500">This controls pages using the shared marketing page template, including product, feature, industry, resource, and integration pages.</p>
+                </div>
+                <Button variant="outline" className="w-full" onClick={resetMarketingPage}>Reset This Page To Code Default</Button>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Changing: {selectedPageOption?.label || "Marketing Page"}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Input placeholder="Eyebrow, for example Product" value={pageDraft.eyebrow} onChange={(event) => setPageDraft({ ...pageDraft, eyebrow: event.target.value })} />
+                  <Input placeholder="Category, for example WhatsApp Forms" value={pageDraft.category} onChange={(event) => setPageDraft({ ...pageDraft, category: event.target.value })} />
+                </div>
+                <Input placeholder="Page H1 title" value={pageDraft.title} onChange={(event) => setPageDraft({ ...pageDraft, title: event.target.value })} />
+                <Textarea placeholder="Hero description" value={pageDraft.description} onChange={(event) => setPageDraft({ ...pageDraft, description: event.target.value })} />
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="space-y-2">
+                    <span className="text-sm font-bold text-slate-700">Hero Highlights, one per line</span>
+                    <Textarea className="min-h-40" value={pageDraft.highlights} onChange={(event) => setPageDraft({ ...pageDraft, highlights: event.target.value })} />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-sm font-bold text-slate-700">Use Case Cards, one per line</span>
+                    <Textarea className="min-h-40" value={pageDraft.useCases} onChange={(event) => setPageDraft({ ...pageDraft, useCases: event.target.value })} />
+                  </label>
+                </div>
+                <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
+                  <p className="text-xs font-black uppercase text-emerald-700">Preview</p>
+                  <h2 className="mt-2 text-2xl font-black text-slate-950">{pageDraft.title || selectedPageFallback?.title}</h2>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">{pageDraft.description || selectedPageFallback?.description}</p>
+                </div>
+                <Button className="bg-emerald-700 hover:bg-emerald-800" disabled={!selectedPageKey || !pageDraft.title || saveSetting.isPending} onClick={saveMarketingPage}>
+                  <Save className="h-4 w-4" /> Save Marketing Page
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
         )}
 
         {activeSection === "logos" && (

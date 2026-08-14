@@ -15,6 +15,7 @@
 import type { Pool, PoolClient } from "pg";
 import { precheckCleanupSteps } from "./db-precheck-cleanup";
 import { PROVIDER_CURRENCY_OPTIONS } from "@shared/payment-currencies";
+import bcrypt from "bcryptjs";
 
 interface MigrationStep {
   description: string;
@@ -974,6 +975,27 @@ const steps: MigrationStep[] = [
   },
 
   {
+    description: "Create white-label domains table (if not exists)",
+    sql: `
+      CREATE TABLE IF NOT EXISTS white_label_domains (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        superadmin_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        domain TEXT NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        verification_token VARCHAR(120) NOT NULL,
+        ssl_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        notes TEXT,
+        verified_at TIMESTAMPTZ,
+        created_by VARCHAR REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS white_label_domains_domain_unique ON white_label_domains(domain);
+      CREATE INDEX IF NOT EXISTS white_label_domains_superadmin_idx ON white_label_domains(superadmin_id);
+    `,
+  },
+
+  {
     description: "Create marketing CMS logos table (if not exists)",
     sql: `
       CREATE TABLE IF NOT EXISTS marketing_cms_logos (
@@ -1099,6 +1121,45 @@ async function getExistingTables(
   return new Set(rows.map((r) => r.table_name));
 }
 
+async function ensurePlatformAdmin(client: PoolClient): Promise<void> {
+  const email = process.env.PLATFORM_ADMIN_EMAIL?.trim();
+  const password = process.env.PLATFORM_ADMIN_PASSWORD;
+  const username = process.env.PLATFORM_ADMIN_USERNAME?.trim() || "platformadmin";
+
+  if (!email || !password) {
+    console.log("[startup-migration] Platform admin seed skipped. Set PLATFORM_ADMIN_EMAIL and PLATFORM_ADMIN_PASSWORD to create it.");
+    return;
+  }
+
+  const { rows } = await client.query<{ id: string; role: string }>(
+    "SELECT id, role FROM users WHERE email = $1 OR username = $2 LIMIT 1",
+    [email, username]
+  );
+
+  if (rows.length > 0) {
+    if (rows[0].role !== "platform_admin") {
+      console.warn(`[startup-migration] Platform admin seed skipped because ${email}/${username} already exists as role ${rows[0].role}.`);
+    }
+    return;
+  }
+
+  const hashedPassword = await bcrypt.hash(password, 10);
+  const firstName = process.env.PLATFORM_ADMIN_FIRST_NAME?.trim() || "Platform";
+  const lastName = process.env.PLATFORM_ADMIN_LAST_NAME?.trim() || "Admin";
+
+  await client.query(
+    `
+      INSERT INTO users
+        (username, password, email, first_name, last_name, role, status, permissions, is_email_verified)
+      VALUES
+        ($1, $2, $3, $4, $5, 'platform_admin', 'active', ARRAY['*']::text[], true)
+    `,
+    [username, hashedPassword, email, firstName, lastName]
+  );
+
+  console.log(`[startup-migration] Created platform admin account for ${email}.`);
+}
+
 export async function runStartupMigration(pool: Pool): Promise<void> {
   const client = await pool.connect();
   try {
@@ -1130,6 +1191,8 @@ export async function runStartupMigration(pool: Pool): Promise<void> {
         `Startup migration encountered ${errors.length} error(s). See logs above.`
       );
     }
+
+    await ensurePlatformAdmin(client);
 
     const afterColumns = await getExistingColumns(client);
     const afterTables = await getExistingTables(client);

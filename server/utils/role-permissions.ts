@@ -22,7 +22,7 @@ export function resolveUserPermissions(
   role: string,
   dbPermissions?: string[]
 ): PermissionMap {
-  if (role === Role.ADMIN || role === Role.SUPERADMIN) {
+  if (role === Role.PLATFORM_ADMIN || role === Role.ADMIN || role === Role.SUPERADMIN) {
     // Admin gets all permissions dynamically from PERMISSIONS
     const all: PermissionMap = {};
     Object.values(PERMISSIONS).forEach((perm) => {
