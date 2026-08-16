@@ -24,11 +24,14 @@ import {
   ScrollText,
   Headphones,
   CreditCard,
+  Wallet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
 import { useState, useRef, useEffect } from "react";
 import { useAuth } from "@/contexts/auth-context";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 
 import { useSidebar } from "@/contexts/sidebar-context";
 import { LanguageSelector } from "../language-selector";
@@ -61,6 +64,14 @@ export default function Header({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { user, logout } = useAuth();
   const { t } = useTranslation();
+  const canShowCreditBalance =
+    !!user?.id && user.role !== "superadmin" && user.role !== "platform_admin";
+
+  const { data: creditData } = useQuery<{ balance: number }>({
+    queryKey: ["/api/topups/balance", user?.id],
+    queryFn: () => apiRequest("GET", "/api/topups/balance").then((res) => res.json()),
+    enabled: canShowCreditBalance,
+  });
 
   const username = (user?.firstName || "") + " " + (user?.lastName || "");
 
@@ -104,6 +115,19 @@ export default function Header({
           </div>
 
           <div className="flex items-center space-x-2 sm:space-x-4 ">
+            {canShowCreditBalance && (
+              <button
+                onClick={() => setLocation("/settings?tab=billing")}
+                className="hidden items-center gap-2 rounded-lg border border-green-100 bg-green-50 px-3 py-2 text-sm font-semibold text-green-700 transition hover:bg-green-100 md:flex"
+                title="Credit balance"
+              >
+                <Wallet className="h-4 w-4" />
+                <span>Credits</span>
+                <span className="font-bold">
+                  {Number(creditData?.balance || 0).toLocaleString()}
+                </span>
+              </button>
+            )}
             <div className="flex w-fit items-center gap-2">
               {secondaryAction && (
                 <Button
