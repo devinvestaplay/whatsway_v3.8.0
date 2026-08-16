@@ -302,7 +302,16 @@ export default function WhiteLabel() {
 
   const updatePoints = useMutation({
     mutationFn: () => apiRequest("PATCH", `${API}/workspaces/${pointForm?.workspaceId}/points`, { transactionType: pointForm?.transactionType, credits: Number(pointForm?.credits || 0), note: pointForm?.note || null }),
-    onSuccess: () => { setPointForm(null); setShowAdjustPoints(false); invalidateAll(); if (pointsWorkspace) queryClient.invalidateQueries({ queryKey: [pointsLedgerUrl] }); toast({ title: "Workspace points updated" }); },
+    onSuccess: (data: { points?: unknown }) => {
+      if (pointsWorkspace && data?.points !== undefined) {
+        setPointsWorkspace({ ...pointsWorkspace, points: data.points as WorkspaceRow["points"] });
+      }
+      setPointForm(null);
+      setShowAdjustPoints(false);
+      invalidateAll();
+      if (pointsWorkspace) queryClient.invalidateQueries({ queryKey: [pointsLedgerUrl] });
+      toast({ title: "Workspace points updated" });
+    },
   });
 
   const deleteEntity = useMutation({
@@ -589,7 +598,10 @@ export default function WhiteLabel() {
             )}
             <table className="w-full min-w-[1180px] text-sm">
               <thead><tr className="border-b text-left text-slate-500"><th className="p-3">Active</th><th className="p-3">Id</th><th className="p-3">Name</th><th className="p-3">End Date</th><th className="p-3">Bot Users</th><th className="p-3">Bots</th><th className="p-3">Members</th><th className="p-3">Addon</th><th className="p-3">Owner</th><th className="p-3">Created at</th><th className="p-3">Points</th><th className="p-3">Auto Renew</th><th className="p-3 text-right">Actions</th></tr></thead>
-              <tbody>{(workspaces?.rows ?? []).map((w) => <tr key={w.id} className="border-b last:border-0"><td className="p-3"><Switch checked={!!w.is_active} onCheckedChange={(v) => patchWorkspace.mutate({ id: w.id, payload: { isActive: v } })} /></td><td className="p-3 font-mono text-xs text-slate-500">{w.id.slice(0, 8)}</td><td className="p-3 font-semibold">{w.name}<div className="text-xs font-normal text-slate-500">{w.phone_number || "Workspace shell"}</div></td><td className="p-3">{formatDate(w.end_date)}</td><td className="p-3">{formatNumber(w.bot_users)}</td><td className="p-3">{formatNumber(w.bots)}</td><td className="p-3">{formatNumber(w.members)}</td><td className="p-3">{formatNumber(w.addon_count)}</td><td className="p-3">{w.owner_name || w.owner_email || "Unassigned"}<div className="text-xs text-slate-500">{w.owner_email}</div><div className="font-mono text-[11px] text-slate-400">{w.owner_id}</div></td><td className="p-3">{formatDate(w.created_at)}</td><td className="p-3"><button className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white" onClick={() => openWorkspacePoints(w)}>{formatNumber(w.points)}</button></td><td className="p-3"><Switch checked={!!w.auto_renew} onCheckedChange={(v) => patchWorkspace.mutate({ id: w.id, payload: { autoRenew: v } })} /></td><td className="p-3 text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button size="icon" variant="outline"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => openWorkspacePoints(w)}><Receipt className="mr-2 h-4 w-4" />Manage points</DropdownMenuItem><DropdownMenuItem className="text-red-600 focus:text-red-600" onClick={() => setDeleteTarget({ type: "workspace", id: w.id, name: w.name })}><Trash2 className="mr-2 h-4 w-4" />Delete workspace</DropdownMenuItem></DropdownMenuContent></DropdownMenu></td></tr>)}</tbody>
+              <tbody>{(workspaces?.rows ?? []).map((w) => {
+                const pointBalance = Number(w.points ?? 0);
+                return <tr key={w.id} className="border-b last:border-0"><td className="p-3"><Switch checked={!!w.is_active} onCheckedChange={(v) => patchWorkspace.mutate({ id: w.id, payload: { isActive: v } })} /></td><td className="p-3 font-mono text-xs text-slate-500">{w.id.slice(0, 8)}</td><td className="p-3 font-semibold">{w.name}<div className="text-xs font-normal text-slate-500">{w.phone_number || "Workspace shell"}</div></td><td className="p-3">{formatDate(w.end_date)}</td><td className="p-3">{formatNumber(w.bot_users)}</td><td className="p-3">{formatNumber(w.bots)}</td><td className="p-3">{formatNumber(w.members)}</td><td className="p-3">{formatNumber(w.addon_count)}</td><td className="p-3">{w.owner_name || w.owner_email || "Unassigned"}<div className="text-xs text-slate-500">{w.owner_email}</div><div className="font-mono text-[11px] text-slate-400">{w.owner_id}</div></td><td className="p-3">{formatDate(w.created_at)}</td><td className="p-3"><button className={`rounded-lg px-3 py-1.5 text-xs font-bold text-white ${pointBalance < 0 ? "bg-red-600" : "bg-emerald-600"}`} onClick={() => openWorkspacePoints(w)}>{formatNumber(w.points)}</button></td><td className="p-3"><Switch checked={!!w.auto_renew} onCheckedChange={(v) => patchWorkspace.mutate({ id: w.id, payload: { autoRenew: v } })} /></td><td className="p-3 text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button size="icon" variant="outline"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => openWorkspacePoints(w)}><Receipt className="mr-2 h-4 w-4" />Manage points</DropdownMenuItem><DropdownMenuItem className="text-red-600 focus:text-red-600" onClick={() => setDeleteTarget({ type: "workspace", id: w.id, name: w.name })}><Trash2 className="mr-2 h-4 w-4" />Delete workspace</DropdownMenuItem></DropdownMenuContent></DropdownMenu></td></tr>;
+              })}</tbody>
             </table>
           </TableCard>
         )}
@@ -882,7 +894,8 @@ export default function WhiteLabel() {
                 <tbody>{(pointsLedger?.rows ?? []).map((entry) => {
                   const type = entry.transaction_type;
                   const amount = type === "debit" ? -Number(entry.credits || 0) : Number(entry.credits || 0);
-                  return <tr key={entry.id} className="border-b last:border-0"><td className="p-3"><StatusPill value={type} /></td><td className={`p-3 font-semibold ${amount < 0 ? "text-red-600" : "text-emerald-600"}`}>{amount < 0 ? "-" : ""}{formatNumber(Math.abs(amount))}</td><td className="p-3">{formatNumber(entry.balance_after)}</td><td className="p-3">{entry.note || entry.reference || "-"}</td><td className="p-3 text-right text-slate-500">{new Date(entry.created_at).toLocaleString()}</td></tr>;
+                  const balanceAfter = Number(entry.balance_after || 0);
+                  return <tr key={entry.id} className="border-b last:border-0"><td className="p-3"><StatusPill value={type} /></td><td className={`p-3 font-semibold ${amount < 0 ? "text-red-600" : "text-emerald-600"}`}>{amount < 0 ? "-" : ""}{formatNumber(Math.abs(amount))}</td><td className={`p-3 font-semibold ${balanceAfter < 0 ? "text-red-600" : "text-slate-950"}`}>{formatNumber(entry.balance_after)}</td><td className="p-3">{entry.note || entry.reference || "-"}</td><td className="p-3 text-right text-slate-500">{new Date(entry.created_at).toLocaleString()}</td></tr>;
                 })}</tbody>
               </table>
               {!(pointsLedger?.rows ?? []).length && <div className="p-8 text-center text-sm text-slate-500">No point history found for this workspace.</div>}

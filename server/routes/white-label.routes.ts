@@ -904,7 +904,7 @@ export function registerWhiteLabelRoutes(app: Express) {
       }
       const before = Number(row.white_label_points || 0);
       const signed = parsed.transactionType === "debit" ? -parsed.credits : parsed.credits;
-      const after = parsed.transactionType === "adjustment" ? parsed.credits : Math.max(0, before + signed);
+      const after = parsed.transactionType === "adjustment" ? parsed.credits : before + signed;
       await db.query(`UPDATE channels SET white_label_points=$1, updated_at=NOW() WHERE id=$2`, [after, req.params.id]);
       const clientBefore = await latestClientBalance(row.owner_id, db);
       const clientSigned = parsed.transactionType === "debit" ? -parsed.credits : parsed.credits;
@@ -912,7 +912,7 @@ export function registerWhiteLabelRoutes(app: Express) {
       const inserted = await db.query(
         `INSERT INTO white_label_credit_transactions (client_id, workspace_id, transaction_type, credits, balance_before, balance_after, reference, note, created_by)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-        [row.owner_id, req.params.id, parsed.transactionType, parsed.credits, clientBefore, Math.max(0, clientAfter), "workspace-points", parsed.note || null, actorId(req)]
+        [row.owner_id, req.params.id, parsed.transactionType, parsed.credits, clientBefore, clientAfter, "workspace-points", parsed.note || null, actorId(req)]
       );
       await db.query("COMMIT");
       await audit(req, "workspace.points", "channel", req.params.id, { points: before }, { points: after, transaction: inserted.rows[0].id });
@@ -1032,7 +1032,7 @@ export function registerWhiteLabelRoutes(app: Express) {
       await db.query("BEGIN");
       const before = await latestClientBalance(parsed.clientId, db);
       const signed = parsed.transactionType === "debit" ? -parsed.credits : parsed.credits;
-      const after = parsed.transactionType === "adjustment" ? parsed.credits : Math.max(0, before + signed);
+      const after = parsed.transactionType === "adjustment" ? parsed.credits : before + signed;
       const inserted = await db.query(
         `INSERT INTO white_label_credit_transactions (client_id, workspace_id, transaction_type, credits, balance_before, balance_after, reference, note, created_by)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
