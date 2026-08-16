@@ -516,7 +516,9 @@ export function registerPlatformRoutes(app: Express) {
     );
 
     const workspaces = await pool.query(
-      `SELECT c.id, c.name, c.status, c.is_active, c.created_at, c.white_label_points, c.white_label_workspace_type,
+      `SELECT c.id, c.name,
+              CASE WHEN COALESCE(c.is_active, false) THEN 'active' ELSE 'inactive' END AS status,
+              c.is_active, c.created_at, c.white_label_points, c.white_label_workspace_type,
               owner.id AS owner_id, owner.email AS owner_email, owner.username AS owner_username
        FROM channels c
        LEFT JOIN users owner ON owner.id = COALESCE(c.white_label_client_id, c.created_by)

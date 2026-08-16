@@ -23,6 +23,7 @@ import {
   Menu,
   ScrollText,
   Headphones,
+  CreditCard,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
@@ -41,6 +42,10 @@ interface HeaderProps {
     label: string;
     onClick: () => void;
   };
+  secondaryAction?: {
+    label: string;
+    onClick: () => void;
+  };
   userPhotoUrl?: string;
 }
 
@@ -48,6 +53,7 @@ export default function Header({
   title,
   subtitle,
   action,
+  secondaryAction,
   userPhotoUrl,
 }: HeaderProps) {
   const [, setLocation] = useLocation();
@@ -98,7 +104,18 @@ export default function Header({
           </div>
 
           <div className="flex items-center space-x-2 sm:space-x-4 ">
-            <div className=" w-fit  ">
+            <div className="flex w-fit items-center gap-2">
+              {secondaryAction && (
+                <Button
+                  onClick={secondaryAction.onClick}
+                  variant="outline"
+                  className="border-green-200 bg-white px-3 py-1 text-green-700 hover:bg-green-50 flex items-center gap-2"
+                >
+                  <CreditCard className="w-4 h-4" />
+                  <span className="hidden sm:inline">{secondaryAction.label}</span>
+                  <span className="sm:hidden">Top Up</span>
+                </Button>
+              )}
               {action && (
                 <Button
                   onClick={action.onClick}

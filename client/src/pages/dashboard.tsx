@@ -275,6 +275,10 @@ export default function Dashboard() {
             label: t("dashboard.newCampaign"),
             onClick: () => setLocation("/campaigns"),
           }}
+          secondaryAction={{
+            label: "Top Up Credit",
+            onClick: () => setLocation("/settings?tab=billing"),
+          }}
         />
       )}
 
