@@ -7,6 +7,25 @@ import { z } from "zod";
 import { db, pool } from "../db";
 import { requireAuth, requirePlatformAdmin } from "../middlewares/auth.middleware";
 import { users, whiteLabelDomains } from "@shared/schema";
+import {
+  ZiinaProviderError,
+  amountToMinorUnits,
+  createPaymentIntent,
+  getIntentCheckoutUrl,
+  getPaymentIntent,
+  getZiinaEnv,
+  normalizeZiinaStatus,
+  sanitizeZiinaPayload,
+} from "../services/payments/ziina.service";
+import {
+  activatePlatformPartnerPayment,
+  addPartnerCreditTransaction,
+  dateOrNull,
+  getPartnerCreditBalance,
+  processPlatformPartnerDunning,
+  processPlatformPartnerRenewals,
+  syncPartnerControls,
+} from "../services/platform-partner-billing.service";
 
 const createSuperadminSchema = z.object({
   username: z.string().trim().min(2).max(100),
@@ -37,6 +56,62 @@ const controlsSchema = z.object({
   clientLimit: z.coerce.number().int().min(0).nullable().optional(),
   workspaceLimit: z.coerce.number().int().min(0).nullable().optional(),
   creditBalance: z.coerce.number().min(0).optional(),
+  notes: z.string().trim().max(1000).nullable().optional(),
+});
+
+const partnerPlanSchema = z.object({
+  planKey: z.string().trim().min(2).max(80).optional(),
+  name: z.string().trim().min(1).max(160),
+  description: z.string().trim().max(1000).nullable().optional(),
+  status: z.enum(["active", "inactive"]).default("active"),
+  monthlyPrice: z.coerce.number().min(0).default(0),
+  yearlyPrice: z.coerce.number().min(0).default(0),
+  currency: z.string().trim().min(1).max(12).default("USD"),
+  clientLimit: z.coerce.number().int().min(0).nullable().optional(),
+  workspaceLimit: z.coerce.number().int().min(0).nullable().optional(),
+  domainLimit: z.coerce.number().int().min(0).nullable().optional(),
+  includedCredits: z.coerce.number().min(0).default(0),
+  trialDays: z.coerce.number().int().min(0).default(0),
+  features: z.array(z.string()).default([]),
+  displayOrder: z.coerce.number().int().default(0),
+});
+
+const partnerSubscriptionSchema = z.object({
+  planId: z.string().trim().min(1),
+  status: z.enum(["active", "trialing", "past_due", "cancelled", "expired"]).default("active"),
+  billingCycle: z.enum(["monthly", "yearly", "manual"]).default("monthly"),
+  startDate: z.string().optional().nullable(),
+  endDate: z.string().optional().nullable(),
+  autoRenew: z.coerce.boolean().default(false),
+  clientLimit: z.coerce.number().int().min(0).nullable().optional(),
+  workspaceLimit: z.coerce.number().int().min(0).nullable().optional(),
+  domainLimit: z.coerce.number().int().min(0).nullable().optional(),
+  includedCredits: z.coerce.number().min(0).optional(),
+  price: z.coerce.number().min(0).optional(),
+  currency: z.string().trim().min(1).max(12).optional(),
+  notes: z.string().trim().max(1000).nullable().optional(),
+  grantIncludedCredits: z.coerce.boolean().default(false),
+});
+
+const partnerCreditSchema = z.object({
+  transactionType: z.enum(["credit", "debit", "adjustment"]),
+  credits: z.coerce.number().positive(),
+  reference: z.string().trim().max(160).nullable().optional(),
+  note: z.string().trim().max(1000).nullable().optional(),
+});
+
+const partnerZiinaCheckoutSchema = z.object({
+  planId: z.string().trim().min(1),
+  billingCycle: z.enum(["monthly", "yearly"]).default("monthly"),
+  currency: z.enum(["AED", "USD", "INR"]).default("AED"),
+  startDate: z.string().optional().nullable(),
+  endDate: z.string().optional().nullable(),
+  autoRenew: z.coerce.boolean().default(false),
+  clientLimit: z.coerce.number().int().min(0).nullable().optional(),
+  workspaceLimit: z.coerce.number().int().min(0).nullable().optional(),
+  domainLimit: z.coerce.number().int().min(0).nullable().optional(),
+  includedCredits: z.coerce.number().min(0).optional(),
+  grantIncludedCredits: z.coerce.boolean().default(true),
   notes: z.string().trim().max(1000).nullable().optional(),
 });
 
@@ -74,6 +149,21 @@ function sessionUserFromRow(row: any, impersonatedBy?: string) {
   };
 }
 
+function planKeyFromName(name: string) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || `plan_${Date.now()}`;
+}
+
+async function getActiveZiinaProvider() {
+  const provider = await pool.query(`SELECT * FROM payment_providers WHERE provider_key='ziina' AND is_active=true LIMIT 1`);
+  return provider.rows[0] || null;
+}
+
+function ziinaResultUrl(base: string, paymentId: string) {
+  const url = new URL(base);
+  url.searchParams.set("paymentId", paymentId);
+  return url.toString();
+}
+
 export function registerPlatformRoutes(app: Express) {
   app.get("/api/platform/superadmins", requireAuth, requirePlatformAdmin, async (_req: Request, res: Response) => {
     try {
@@ -87,6 +177,19 @@ export function registerPlatformRoutes(app: Express) {
           u.status,
           u.created_at AS "createdAt",
           u.updated_at AS "updatedAt",
+          pp.name AS "planName",
+          pps.status AS "subscriptionStatus",
+          pps.end_date AS "subscriptionEndDate",
+          pps.client_limit AS "clientLimit",
+          pps.workspace_limit AS "workspaceLimit",
+          pps.domain_limit AS "domainLimit",
+          COALESCE((
+            SELECT balance_after
+            FROM platform_partner_credit_transactions pct
+            WHERE pct.superadmin_id = u.id
+            ORDER BY pct.created_at DESC, pct.id DESC
+            LIMIT 1
+          ), COALESCE(psc.credit_balance, 0))::numeric AS "creditBalance",
           (
             SELECT COUNT(*)::int
             FROM users client
@@ -111,6 +214,11 @@ export function registerPlatformRoutes(app: Express) {
             WHERE d.superadmin_id = u.id
           ) AS domains
         FROM users u
+        LEFT JOIN platform_partner_subscriptions pps
+          ON pps.superadmin_id = u.id
+          AND pps.status IN ('active','trialing','past_due')
+        LEFT JOIN platform_partner_plans pp ON pp.id = pps.plan_id
+        LEFT JOIN platform_superadmin_controls psc ON psc.superadmin_id = u.id
         WHERE u.role = 'superadmin'
           AND u.status <> 'deleted'
         ORDER BY u.created_at DESC NULLS LAST, u.email ASC
@@ -161,6 +269,75 @@ export function registerPlatformRoutes(app: Express) {
       }
       console.error("[platform] create superadmin failed:", error);
       res.status(500).json({ success: false, message: "Failed to create superadmin" });
+    }
+  });
+
+  app.get("/api/platform/plans", requireAuth, requirePlatformAdmin, async (_req: Request, res: Response) => {
+    const { rows } = await pool.query(
+      `SELECT id, plan_key AS "planKey", name, description, status,
+              monthly_price AS "monthlyPrice", yearly_price AS "yearlyPrice", currency,
+              client_limit AS "clientLimit", workspace_limit AS "workspaceLimit", domain_limit AS "domainLimit",
+              included_credits AS "includedCredits", trial_days AS "trialDays", features,
+              display_order AS "displayOrder", created_at AS "createdAt", updated_at AS "updatedAt"
+       FROM platform_partner_plans
+       ORDER BY display_order ASC, monthly_price ASC, name ASC`
+    );
+    res.json({ success: true, data: rows });
+  });
+
+  app.post("/api/platform/plans", requireAuth, requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const parsed = partnerPlanSchema.parse(req.body);
+      const planKey = parsed.planKey || planKeyFromName(parsed.name);
+      const { rows } = await pool.query(
+        `INSERT INTO platform_partner_plans
+          (plan_key, name, description, status, monthly_price, yearly_price, currency, client_limit, workspace_limit,
+           domain_limit, included_credits, trial_days, features, display_order, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         ON CONFLICT (plan_key) DO UPDATE SET
+           name=EXCLUDED.name,
+           description=EXCLUDED.description,
+           status=EXCLUDED.status,
+           monthly_price=EXCLUDED.monthly_price,
+           yearly_price=EXCLUDED.yearly_price,
+           currency=EXCLUDED.currency,
+           client_limit=EXCLUDED.client_limit,
+           workspace_limit=EXCLUDED.workspace_limit,
+           domain_limit=EXCLUDED.domain_limit,
+           included_credits=EXCLUDED.included_credits,
+           trial_days=EXCLUDED.trial_days,
+           features=EXCLUDED.features,
+           display_order=EXCLUDED.display_order,
+           updated_at=NOW()
+         RETURNING id, plan_key AS "planKey", name, description, status, monthly_price AS "monthlyPrice",
+           yearly_price AS "yearlyPrice", currency, client_limit AS "clientLimit", workspace_limit AS "workspaceLimit",
+           domain_limit AS "domainLimit", included_credits AS "includedCredits", trial_days AS "trialDays",
+           features, display_order AS "displayOrder"`,
+        [
+          planKey,
+          parsed.name,
+          parsed.description || null,
+          parsed.status,
+          parsed.monthlyPrice,
+          parsed.yearlyPrice,
+          parsed.currency,
+          parsed.clientLimit ?? null,
+          parsed.workspaceLimit ?? null,
+          parsed.domainLimit ?? null,
+          parsed.includedCredits,
+          parsed.trialDays,
+          JSON.stringify(parsed.features || []),
+          parsed.displayOrder,
+          req.user?.id || null,
+        ]
+      );
+      await audit(req, "platform.plan.upsert", "platform_partner_plan", rows[0].id, rows[0]);
+      res.json({ success: true, data: rows[0] });
+    } catch (error: any) {
+      if (error?.name === "ZodError") {
+        return res.status(400).json({ success: false, message: error.errors?.[0]?.message || "Invalid plan" });
+      }
+      res.status(500).json({ success: false, message: "Failed to save platform plan" });
     }
   });
 
@@ -379,6 +556,475 @@ export function registerPlatformRoutes(app: Express) {
     });
   });
 
+  app.get("/api/platform/superadmins/:id/billing", requireAuth, requirePlatformAdmin, async (req: Request, res: Response) => {
+    const owner = await pool.query(
+      `SELECT id, username, email, first_name AS "firstName", last_name AS "lastName", status
+       FROM users WHERE id=$1 AND role='superadmin' AND status <> 'deleted'`,
+      [req.params.id]
+    );
+    if (!owner.rows[0]) return res.status(404).json({ success: false, message: "Superadmin not found" });
+
+    const plans = await pool.query(
+      `SELECT id, plan_key AS "planKey", name, description, status, monthly_price AS "monthlyPrice",
+              yearly_price AS "yearlyPrice", currency, client_limit AS "clientLimit",
+              workspace_limit AS "workspaceLimit", domain_limit AS "domainLimit",
+              included_credits AS "includedCredits", trial_days AS "trialDays", features,
+              display_order AS "displayOrder"
+       FROM platform_partner_plans
+       ORDER BY display_order ASC, monthly_price ASC`
+    );
+
+    const subscription = await pool.query(
+      `SELECT s.id, s.superadmin_id AS "superadminId", s.plan_id AS "planId", s.status,
+              s.billing_cycle AS "billingCycle", s.start_date AS "startDate", s.end_date AS "endDate",
+              s.auto_renew AS "autoRenew", s.client_limit AS "clientLimit", s.workspace_limit AS "workspaceLimit",
+              s.domain_limit AS "domainLimit", s.included_credits AS "includedCredits", s.price, s.currency,
+              s.notes, s.created_at AS "createdAt", s.updated_at AS "updatedAt",
+              p.name AS "planName"
+       FROM platform_partner_subscriptions s
+       LEFT JOIN platform_partner_plans p ON p.id=s.plan_id
+       WHERE s.superadmin_id=$1
+       ORDER BY
+         CASE WHEN s.status IN ('active','trialing','past_due') THEN 0 ELSE 1 END,
+         s.created_at DESC
+       LIMIT 1`,
+      [req.params.id]
+    );
+
+    const ledger = await pool.query(
+      `SELECT id, superadmin_id AS "superadminId", subscription_id AS "subscriptionId",
+              transaction_type AS "transactionType", credits, balance_before AS "balanceBefore",
+              balance_after AS "balanceAfter", reference, note, created_at AS "createdAt"
+       FROM platform_partner_credit_transactions
+       WHERE superadmin_id=$1
+       ORDER BY created_at DESC, id DESC
+       LIMIT 100`,
+      [req.params.id]
+    );
+
+    const usage = await pool.query(
+      `SELECT
+        (SELECT COUNT(*)::int FROM users u WHERE u.role='admin' AND u.created_by=$1 AND COALESCE(u.status,'') <> 'deleted') AS clients,
+        (SELECT COUNT(DISTINCT c.id)::int
+         FROM channels c
+         JOIN users owner ON owner.id = COALESCE(c.white_label_client_id, c.created_by)
+         WHERE owner.role='admin' AND owner.created_by=$1) AS workspaces,
+        (SELECT COUNT(*)::int FROM white_label_domains d WHERE d.superadmin_id=$1) AS domains`,
+      [req.params.id]
+    );
+
+    const payments = await pool.query(
+      `SELECT id, provider, provider_payment_intent_id AS "providerPaymentIntentId", amount, currency,
+              billing_cycle AS "billingCycle", status, checkout_url AS "checkoutUrl", embedded_url AS "embeddedUrl",
+              paid_at AS "paidAt", created_at AS "createdAt", updated_at AS "updatedAt",
+              failure_code AS "failureCode", failure_message AS "failureMessage"
+       FROM platform_partner_payments
+       WHERE superadmin_id=$1
+       ORDER BY created_at DESC
+       LIMIT 25`,
+      [req.params.id]
+    );
+
+    const invoices = await pool.query(
+      `SELECT id, invoice_number AS "invoiceNumber", subscription_id AS "subscriptionId",
+              payment_id AS "paymentId", status, amount, currency, billing_cycle AS "billingCycle",
+              period_start AS "periodStart", period_end AS "periodEnd", due_at AS "dueAt",
+              paid_at AS "paidAt", failure_message AS "failureMessage", hosted_url AS "hostedUrl",
+              created_at AS "createdAt", updated_at AS "updatedAt"
+       FROM platform_partner_invoices
+       WHERE superadmin_id=$1
+       ORDER BY created_at DESC
+       LIMIT 50`,
+      [req.params.id]
+    );
+
+    const dunningEvents = await pool.query(
+      `SELECT id, subscription_id AS "subscriptionId", invoice_id AS "invoiceId",
+              event_type AS "eventType", status, message, next_retry_at AS "nextRetryAt",
+              metadata, created_at AS "createdAt"
+       FROM platform_partner_dunning_events
+       WHERE superadmin_id=$1
+       ORDER BY created_at DESC
+       LIMIT 50`,
+      [req.params.id]
+    );
+
+    res.json({
+      success: true,
+      data: {
+        superadmin: owner.rows[0],
+        plans: plans.rows,
+        subscription: subscription.rows[0] || null,
+        ledger: ledger.rows,
+        payments: payments.rows,
+        invoices: invoices.rows,
+        dunningEvents: dunningEvents.rows,
+        balance: await getPartnerCreditBalance(req.params.id),
+        usage: usage.rows[0] || { clients: 0, workspaces: 0, domains: 0 },
+      },
+    });
+  });
+
+  app.post("/api/platform/billing/run-renewals", requireAuth, requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const baseUrl = `${req.protocol}://${req.get("host")}`;
+      const renewals = await processPlatformPartnerRenewals({ baseUrl });
+      const dunning = await processPlatformPartnerDunning({ baseUrl });
+      await audit(req, "platform.billing.run_renewals", "platform_partner_billing", undefined, { renewals, dunning });
+      res.json({ success: true, data: { renewals, dunning } });
+    } catch (error: any) {
+      console.error("[platform] renewal runner failed:", error);
+      res.status(500).json({ success: false, message: "Failed to run partner billing renewals" });
+    }
+  });
+
+  app.get("/api/platform/invoices/:invoiceId/html", requireAuth, async (req: Request, res: Response) => {
+    const invoiceResult = await pool.query(
+      `SELECT i.*, u.email, u.first_name, u.last_name, u.username, p.name AS plan_name
+       FROM platform_partner_invoices i
+       JOIN users u ON u.id=i.superadmin_id
+       LEFT JOIN platform_partner_subscriptions s ON s.id=i.subscription_id
+       LEFT JOIN platform_partner_plans p ON p.id=s.plan_id
+       WHERE i.id=$1`,
+      [req.params.invoiceId]
+    );
+    const invoice = invoiceResult.rows[0];
+    if (!invoice) return res.status(404).send("Invoice not found");
+
+    const currentUser = req.user as any;
+    const canView = currentUser?.role === "platform_admin" || currentUser?.id === invoice.superadmin_id;
+    if (!canView) return res.status(403).send("Forbidden");
+
+    const name = [invoice.first_name, invoice.last_name].filter(Boolean).join(" ") || invoice.username || invoice.email;
+    const money = `${invoice.currency} ${Number(invoice.amount || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+    res.type("html").send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>${invoice.invoice_number}</title>
+    <style>
+      body { font-family: Arial, sans-serif; color: #0f172a; margin: 0; background: #f8fafc; }
+      main { max-width: 760px; margin: 32px auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 32px; }
+      h1 { margin: 0; font-size: 32px; }
+      .muted { color: #64748b; }
+      .row { display: flex; justify-content: space-between; border-bottom: 1px solid #e2e8f0; padding: 14px 0; gap: 24px; }
+      .total { font-size: 24px; font-weight: 800; }
+      .pill { display: inline-block; padding: 6px 12px; border-radius: 999px; background: #dcfce7; color: #166534; font-weight: 700; }
+      @media print { body { background: #fff; } main { border: 0; margin: 0; max-width: none; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="row">
+        <div>
+          <h1>Invoice</h1>
+          <p class="muted">${invoice.invoice_number}</p>
+        </div>
+        <div><span class="pill">${invoice.status}</span></div>
+      </div>
+      <div class="row"><strong>Partner</strong><span>${name}<br /><span class="muted">${invoice.email}</span></span></div>
+      <div class="row"><strong>Plan</strong><span>${invoice.plan_name || "Partner subscription"}</span></div>
+      <div class="row"><strong>Billing cycle</strong><span>${invoice.billing_cycle}</span></div>
+      <div class="row"><strong>Period</strong><span>${invoice.period_start ? new Date(invoice.period_start).toLocaleDateString() : "-"} - ${invoice.period_end ? new Date(invoice.period_end).toLocaleDateString() : "-"}</span></div>
+      <div class="row"><strong>Due</strong><span>${invoice.due_at ? new Date(invoice.due_at).toLocaleDateString() : "-"}</span></div>
+      <div class="row total"><strong>Total</strong><span>${money}</span></div>
+      ${invoice.failure_message ? `<p style="color:#b91c1c">${invoice.failure_message}</p>` : ""}
+    </main>
+  </body>
+</html>`);
+  });
+
+  app.patch("/api/platform/superadmins/:id/subscription", requireAuth, requirePlatformAdmin, async (req: Request, res: Response) => {
+    const client = await pool.connect();
+    try {
+      const parsed = partnerSubscriptionSchema.parse(req.body);
+      await client.query("BEGIN");
+
+      const owner = await client.query(`SELECT id FROM users WHERE id=$1 AND role='superadmin' AND status <> 'deleted' FOR UPDATE`, [req.params.id]);
+      if (!owner.rows[0]) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ success: false, message: "Superadmin not found" });
+      }
+
+      const planResult = await client.query(`SELECT * FROM platform_partner_plans WHERE id=$1`, [parsed.planId]);
+      const plan = planResult.rows[0];
+      if (!plan) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ success: false, message: "Platform plan not found" });
+      }
+
+      await client.query(
+        `UPDATE platform_partner_subscriptions
+         SET status='cancelled', updated_at=NOW()
+         WHERE superadmin_id=$1 AND status IN ('active','trialing','past_due')`,
+        [req.params.id]
+      );
+
+      const billingCycle = parsed.billingCycle;
+      const price = parsed.price ?? (billingCycle === "yearly" ? Number(plan.yearly_price || 0) : Number(plan.monthly_price || 0));
+      const clientLimit = parsed.clientLimit ?? plan.client_limit ?? null;
+      const workspaceLimit = parsed.workspaceLimit ?? plan.workspace_limit ?? null;
+      const domainLimit = parsed.domainLimit ?? plan.domain_limit ?? null;
+      const includedCredits = parsed.includedCredits ?? Number(plan.included_credits || 0);
+      const currency = parsed.currency || plan.currency || "USD";
+
+      const inserted = await client.query(
+        `INSERT INTO platform_partner_subscriptions
+           (superadmin_id, plan_id, status, billing_cycle, start_date, end_date, auto_renew, client_limit,
+            workspace_limit, domain_limit, included_credits, price, currency, notes, created_by)
+         VALUES ($1,$2,$3,$4,COALESCE($5,NOW()),$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         RETURNING id, superadmin_id AS "superadminId", plan_id AS "planId", status,
+           billing_cycle AS "billingCycle", start_date AS "startDate", end_date AS "endDate",
+           auto_renew AS "autoRenew", client_limit AS "clientLimit", workspace_limit AS "workspaceLimit",
+           domain_limit AS "domainLimit", included_credits AS "includedCredits", price, currency, notes`,
+        [
+          req.params.id,
+          parsed.planId,
+          parsed.status,
+          billingCycle,
+          dateOrNull(parsed.startDate),
+          dateOrNull(parsed.endDate),
+          parsed.autoRenew,
+          clientLimit,
+          workspaceLimit,
+          domainLimit,
+          includedCredits,
+          price,
+          currency,
+          parsed.notes || null,
+          req.user?.id || null,
+        ]
+      );
+
+      const subscription = inserted.rows[0];
+      if (parsed.grantIncludedCredits && includedCredits > 0) {
+        await addPartnerCreditTransaction({
+          superadminId: req.params.id,
+          subscriptionId: subscription.id,
+          transactionType: "plan_grant",
+          credits: includedCredits,
+          reference: `plan:${plan.plan_key}`,
+          note: `Included credits for ${plan.name}`,
+          createdBy: req.user?.id || null,
+        }, client);
+      }
+
+      const balance = await getPartnerCreditBalance(req.params.id, client);
+      await syncPartnerControls(req.params.id, {
+        planName: plan.name,
+        clientLimit,
+        workspaceLimit,
+        creditBalance: balance,
+        notes: parsed.notes || null,
+        createdBy: req.user?.id || null,
+      }, client);
+
+      await client.query("COMMIT");
+      await audit(req, "platform.subscription.assign", "platform_partner_subscription", subscription.id, { superadminId: req.params.id, plan: plan.name, status: parsed.status });
+      res.json({ success: true, data: subscription });
+    } catch (error: any) {
+      await client.query("ROLLBACK");
+      if (error?.name === "ZodError") {
+        return res.status(400).json({ success: false, message: error.errors?.[0]?.message || "Invalid subscription" });
+      }
+      console.error("[platform] subscription update failed:", error);
+      res.status(500).json({ success: false, message: "Failed to update partner subscription" });
+    } finally {
+      client.release();
+    }
+  });
+
+  app.post("/api/platform/superadmins/:id/ziina-checkout", requireAuth, requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const env = getZiinaEnv();
+      if (!env.enabled) return res.status(503).json({ success: false, message: "Ziina payments are disabled" });
+
+      const provider = await getActiveZiinaProvider();
+      if (!provider) return res.status(400).json({ success: false, message: "Ziina payment provider is not active" });
+
+      const parsed = partnerZiinaCheckoutSchema.parse(req.body);
+      const owner = await pool.query(
+        `SELECT id, email, first_name AS "firstName", last_name AS "lastName", status
+         FROM users WHERE id=$1 AND role='superadmin' AND status <> 'deleted'`,
+        [req.params.id]
+      );
+      if (!owner.rows[0]) return res.status(404).json({ success: false, message: "Superadmin not found" });
+      if (owner.rows[0].status !== "active") return res.status(409).json({ success: false, message: "Activate this superadmin before creating a checkout" });
+
+      const planResult = await pool.query(`SELECT * FROM platform_partner_plans WHERE id=$1 AND status='active'`, [parsed.planId]);
+      const plan = planResult.rows[0];
+      if (!plan) return res.status(404).json({ success: false, message: "Active platform plan not found" });
+
+      const price = parsed.billingCycle === "yearly" ? Number(plan.yearly_price || 0) : Number(plan.monthly_price || 0);
+      if (!Number.isFinite(price) || price <= 0) {
+        return res.status(400).json({ success: false, message: "Selected plan has no payable Ziina price for this cycle" });
+      }
+
+      const currency = parsed.currency || plan.currency || "AED";
+      const metadata = {
+        billingCycle: parsed.billingCycle,
+        startDate: parsed.startDate || null,
+        endDate: parsed.endDate || null,
+        autoRenew: parsed.autoRenew,
+        clientLimit: parsed.clientLimit ?? plan.client_limit ?? null,
+        workspaceLimit: parsed.workspaceLimit ?? plan.workspace_limit ?? null,
+        domainLimit: parsed.domainLimit ?? plan.domain_limit ?? null,
+        includedCredits: parsed.includedCredits ?? Number(plan.included_credits || 0),
+        grantIncludedCredits: parsed.grantIncludedCredits,
+        notes: parsed.notes || null,
+        createdBy: req.user?.id || null,
+      };
+
+      const inserted = await pool.query(
+        `INSERT INTO platform_partner_payments
+           (superadmin_id, plan_id, provider, amount, currency, billing_cycle, status, metadata, created_by)
+         VALUES ($1,$2,'ziina',$3,$4,$5,'pending',$6,$7)
+         RETURNING *`,
+        [req.params.id, plan.id, price.toFixed(2), currency, parsed.billingCycle, JSON.stringify(metadata), req.user?.id || null]
+      );
+      const payment = inserted.rows[0];
+
+      const amountMinor = amountToMinorUnits(price, currency);
+      const successUrl = ziinaResultUrl(env.successUrl, payment.id);
+      const cancelUrl = ziinaResultUrl(env.cancelUrl, payment.id);
+      const intent = await createPaymentIntent({
+        amount: amountMinor,
+        currencyCode: currency,
+        message: `${plan.name} partner ${parsed.billingCycle} subscription`,
+        successUrl,
+        cancelUrl,
+        metadata: {
+          paymentId: payment.id,
+          superadminId: req.params.id,
+          planId: plan.id,
+          purpose: "platform_partner_subscription",
+        },
+      });
+      const checkoutUrl = getIntentCheckoutUrl(intent);
+
+      const updated = await pool.query(
+        `UPDATE platform_partner_payments
+         SET provider_payment_intent_id=$2, provider_payment_id=$2, checkout_url=$3, embedded_url=$4,
+             provider_payload=$5, updated_at=NOW()
+         WHERE id=$1
+         RETURNING id, provider_payment_intent_id AS "paymentIntentId", checkout_url AS "checkoutUrl",
+           embedded_url AS "embeddedUrl", status`,
+        [payment.id, intent.id, checkoutUrl, checkoutUrl, JSON.stringify(sanitizeZiinaPayload(intent))]
+      );
+
+      await audit(req, "platform.payment.ziina.create", "platform_partner_payment", payment.id, {
+        superadminId: req.params.id,
+        plan: plan.name,
+        amount: price,
+        currency,
+        billingCycle: parsed.billingCycle,
+      });
+
+      res.json({
+        success: true,
+        data: {
+          paymentId: updated.rows[0].id,
+          paymentIntentId: updated.rows[0].paymentIntentId,
+          embeddedUrl: updated.rows[0].embeddedUrl,
+          redirectUrl: updated.rows[0].checkoutUrl,
+          status: updated.rows[0].status,
+        },
+      });
+    } catch (error: any) {
+      if (error?.name === "ZodError") {
+        return res.status(400).json({ success: false, message: error.errors?.[0]?.message || "Invalid Ziina checkout request" });
+      }
+      const status = error instanceof ZiinaProviderError ? error.status || 502 : error.status || 500;
+      console.error("[platform] Ziina checkout failed:", error);
+      res.status(status).json({ success: false, message: status >= 500 ? "Unable to create Ziina checkout" : error.message });
+    }
+  });
+
+  app.get("/api/platform/ziina/:paymentId/status", requireAuth, requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const result = await pool.query(
+        `SELECT * FROM platform_partner_payments WHERE id=$1 AND provider='ziina' LIMIT 1`,
+        [req.params.paymentId]
+      );
+      let payment = result.rows[0];
+      if (!payment) return res.status(404).json({ success: false, message: "Platform payment not found" });
+
+      if (payment.provider_payment_intent_id && !["completed", "failed", "cancelled", "refunded"].includes(payment.status)) {
+        try {
+          const intent = await getPaymentIntent(payment.provider_payment_intent_id);
+          const status = normalizeZiinaStatus(intent.status);
+          const updated = await pool.query(
+            `UPDATE platform_partner_payments
+             SET status=$2, provider_payload=$3, failure_code=$4, failure_message=$5,
+                 paid_at=CASE WHEN $2='completed' THEN COALESCE(paid_at,NOW()) ELSE paid_at END,
+                 updated_at=NOW()
+             WHERE id=$1
+             RETURNING *`,
+            [
+              payment.id,
+              status,
+              JSON.stringify(sanitizeZiinaPayload(intent)),
+              (intent as any).failure_code || (intent as any).error_code || null,
+              (intent as any).failure_message || (intent as any).error_message || null,
+            ]
+          );
+          payment = updated.rows[0] || payment;
+        } catch {
+          // Keep the local status if Ziina reconciliation is temporarily unavailable.
+        }
+      }
+
+      let activation = null;
+      if (payment.status === "completed" && !payment.subscription_id) {
+        activation = await activatePlatformPartnerPayment(payment.id, "status_poll");
+        const refreshed = await pool.query(`SELECT * FROM platform_partner_payments WHERE id=$1`, [payment.id]);
+        payment = refreshed.rows[0] || payment;
+      }
+
+      res.json({
+        success: true,
+        paymentId: payment.id,
+        status: payment.status,
+        paidAt: payment.paid_at,
+        subscriptionActivated: Boolean(payment.subscription_id || activation?.activated),
+        subscriptionId: payment.subscription_id || activation?.subscriptionId || null,
+      });
+    } catch (error: any) {
+      console.error("[platform] Ziina status failed:", error);
+      res.status(500).json({ success: false, message: "Unable to fetch platform Ziina status" });
+    }
+  });
+
+  app.post("/api/platform/superadmins/:id/credits", requireAuth, requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const parsed = partnerCreditSchema.parse(req.body);
+      const owner = await pool.query(`SELECT id FROM users WHERE id=$1 AND role='superadmin' AND status <> 'deleted'`, [req.params.id]);
+      if (!owner.rows[0]) return res.status(404).json({ success: false, message: "Superadmin not found" });
+
+      const currentSubscription = await pool.query(
+        `SELECT id FROM platform_partner_subscriptions WHERE superadmin_id=$1 AND status IN ('active','trialing','past_due') LIMIT 1`,
+        [req.params.id]
+      );
+      const transaction = await addPartnerCreditTransaction({
+        superadminId: req.params.id,
+        subscriptionId: currentSubscription.rows[0]?.id || null,
+        transactionType: parsed.transactionType === "adjustment" ? "manual_adjustment" : parsed.transactionType,
+        credits: parsed.credits,
+        reference: parsed.reference || "manual",
+        note: parsed.note || null,
+        createdBy: req.user?.id || null,
+      });
+      await audit(req, "platform.credits.adjust", "platform_partner_credit_transaction", transaction.id, transaction);
+      res.json({ success: true, data: transaction });
+    } catch (error: any) {
+      if (error?.name === "ZodError") {
+        return res.status(400).json({ success: false, message: error.errors?.[0]?.message || "Invalid credit transaction" });
+      }
+      console.error("[platform] credit adjustment failed:", error);
+      res.status(500).json({ success: false, message: "Failed to adjust partner credits" });
+    }
+  });
+
   app.get("/api/platform/superadmins/:id/controls", requireAuth, requirePlatformAdmin, async (req: Request, res: Response) => {
     const result = await pool.query(
       `INSERT INTO platform_superadmin_controls (superadmin_id, created_by)
@@ -437,13 +1083,24 @@ export function registerPlatformRoutes(app: Express) {
               d.verification_token AS "verificationToken", d.ssl_status AS "sslStatus",
               d.notes, d.verified_at AS "verifiedAt", d.created_at AS "createdAt", d.updated_at AS "updatedAt",
               u.status AS "superadminStatus",
+              sub.status AS "subscriptionStatus",
+              sub.end_date AS "subscriptionEndDate",
               CASE
                 WHEN u.status <> 'active' THEN 'Superadmin inactive'
                 WHEN d.status <> 'active' THEN 'Domain inactive'
+                WHEN sub.status IS NOT NULL AND sub.status NOT IN ('active', 'trialing') THEN 'Partner subscription inactive'
+                WHEN sub.end_date IS NOT NULL AND sub.end_date <= NOW() THEN 'Partner subscription expired'
                 ELSE NULL
               END AS "blockedReason"
        FROM white_label_domains d
        JOIN users u ON u.id=d.superadmin_id
+       LEFT JOIN LATERAL (
+         SELECT status, end_date
+         FROM platform_partner_subscriptions s
+         WHERE s.superadmin_id=d.superadmin_id
+         ORDER BY CASE WHEN s.status IN ('active', 'trialing', 'past_due') THEN 0 ELSE 1 END, s.created_at DESC
+         LIMIT 1
+       ) sub ON true
        WHERE d.superadmin_id=$1
        ORDER BY d.created_at DESC`,
       [req.params.id]
@@ -462,6 +1119,28 @@ export function registerPlatformRoutes(app: Express) {
         .limit(1);
 
       if (!owner) return res.status(404).json({ success: false, message: "Superadmin not found" });
+
+      const limitResult = await pool.query(
+        `SELECT domain_limit
+         FROM platform_partner_subscriptions
+         WHERE superadmin_id=$1 AND status IN ('active', 'trialing', 'past_due')
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [owner.id]
+      );
+      const domainLimit = limitResult.rows[0]?.domain_limit;
+      if (domainLimit !== null && domainLimit !== undefined) {
+        const countResult = await pool.query(
+          `SELECT COUNT(*)::int AS count FROM white_label_domains WHERE superadmin_id=$1`,
+          [owner.id]
+        );
+        if (Number(countResult.rows[0]?.count || 0) >= Number(domainLimit)) {
+          return res.status(403).json({
+            success: false,
+            message: "Partner domain limit reached. Increase this superadmin subscription limit before adding another domain.",
+          });
+        }
+      }
 
       const [created] = await db
         .insert(whiteLabelDomains)
@@ -514,20 +1193,35 @@ export function registerPlatformRoutes(app: Express) {
 
   app.get("/api/platform/domains/:id/check", requireAuth, requirePlatformAdmin, async (req: Request, res: Response) => {
     const result = await pool.query(
-      `SELECT d.id, d.domain, d.status, d.ssl_status, u.status AS superadmin_status
+      `SELECT d.id, d.domain, d.status, d.ssl_status, u.status AS superadmin_status,
+              sub.status AS subscription_status, sub.end_date AS subscription_end_date
        FROM white_label_domains d
        JOIN users u ON u.id=d.superadmin_id
+       LEFT JOIN LATERAL (
+         SELECT status, end_date
+         FROM platform_partner_subscriptions s
+         WHERE s.superadmin_id=d.superadmin_id
+         ORDER BY CASE WHEN s.status IN ('active', 'trialing', 'past_due') THEN 0 ELSE 1 END, s.created_at DESC
+         LIMIT 1
+       ) sub ON true
        WHERE d.id=$1`,
       [req.params.id]
     );
     const row = result.rows[0];
     if (!row) return res.status(404).json({ success: false, message: "Domain not found" });
+    const subscriptionExpired = Boolean(row.subscription_end_date && new Date(row.subscription_end_date).getTime() <= Date.now());
+    const subscriptionBlocked = Boolean(
+      row.subscription_status &&
+      (!["active", "trialing"].includes(row.subscription_status) || subscriptionExpired)
+    );
 
     const checks: Record<string, unknown> = {
       domain: row.domain,
       domainStatus: row.status,
       superadminStatus: row.superadmin_status,
-      allowed: row.status === "active" && row.superadmin_status === "active",
+      subscriptionStatus: row.subscription_status || "not assigned",
+      subscriptionEndDate: row.subscription_end_date || null,
+      allowed: row.status === "active" && row.superadmin_status === "active" && !subscriptionBlocked,
     };
 
     try {
@@ -543,6 +1237,10 @@ export function registerPlatformRoutes(app: Express) {
       checks.blockedReason = "Superadmin inactive";
     } else if (row.status !== "active") {
       checks.blockedReason = "Domain inactive";
+    } else if (row.subscription_status && !["active", "trialing"].includes(row.subscription_status)) {
+      checks.blockedReason = "Partner subscription inactive";
+    } else if (subscriptionExpired) {
+      checks.blockedReason = "Partner subscription expired";
     }
 
     await audit(req, "check_partner_domain", "white_label_domain", row.id, checks);
@@ -565,6 +1263,10 @@ export function registerPlatformRoutes(app: Express) {
           OR a.action_type LIKE 'update_partner_domain%'
           OR a.action_type LIKE 'check_partner_domain%'
           OR a.action_type LIKE 'impersonation.%'
+          OR a.action_type LIKE 'platform.plan.%'
+          OR a.action_type LIKE 'platform.subscription.%'
+          OR a.action_type LIKE 'platform.credits.%'
+          OR a.action_type LIKE 'platform.payment.%'
        ORDER BY a.created_at DESC
        LIMIT $1`,
       [limit]

@@ -16,6 +16,7 @@ import {
   sanitizeZiinaPayload,
   verifyWebhookSignature,
 } from "../services/payments/ziina.service";
+import { activatePlatformPartnerPayment } from "../services/platform-partner-billing.service";
 
 const createSchema = z.object({
   planId: z.string().min(1),
@@ -103,6 +104,40 @@ async function maybeActivate(transaction: any, providerStatus?: string) {
   return true;
 }
 
+async function reconcilePlatformPartnerPayment(payment: any) {
+  if (payment.provider_payment_intent_id && !["completed", "failed", "cancelled", "refunded"].includes(payment.status)) {
+    try {
+      const intent = await getPaymentIntent(payment.provider_payment_intent_id);
+      const updated = await pool.query(
+        `UPDATE platform_partner_payments
+         SET status=$2, provider_payload=$3, failure_code=$4, failure_message=$5,
+             paid_at=CASE WHEN $2='completed' THEN COALESCE(paid_at,NOW()) ELSE paid_at END,
+             updated_at=NOW()
+         WHERE id=$1
+         RETURNING *`,
+        [
+          payment.id,
+          normalizeZiinaStatus(intent.status),
+          JSON.stringify(sanitizeZiinaPayload(intent)),
+          (intent as any).failure_code || (intent as any).error_code || null,
+          (intent as any).failure_message || (intent as any).error_message || null,
+        ]
+      );
+      payment = updated.rows[0] || payment;
+    } catch {
+      // Leave local status untouched if Ziina reconciliation is unavailable.
+    }
+  }
+
+  let activation = null;
+  if (payment.status === "completed" && !payment.subscription_id) {
+    activation = await activatePlatformPartnerPayment(payment.id, "status_poll");
+    const refreshed = await pool.query(`SELECT * FROM platform_partner_payments WHERE id=$1`, [payment.id]);
+    payment = refreshed.rows[0] || payment;
+  }
+  return { payment, activation };
+}
+
 export function registerZiinaRoutes(app: Express) {
   app.post("/api/payments/ziina/create", requireAuth, async (req, res) => {
     try {
@@ -187,7 +222,25 @@ export function registerZiinaRoutes(app: Express) {
         [req.params.paymentId]
       );
       let tx = result.rows[0];
-      if (!tx) return res.status(404).json({ error: "Payment not found" });
+      if (!tx) {
+        const platformResult = await pool.query(
+          `SELECT * FROM platform_partner_payments WHERE id=$1 AND provider='ziina' LIMIT 1`,
+          [req.params.paymentId]
+        );
+        const platformPayment = platformResult.rows[0];
+        if (!platformPayment) return res.status(404).json({ error: "Payment not found" });
+        if (user.role !== "platform_admin" && user.id !== platformPayment.superadmin_id) {
+          return res.status(403).json({ error: "Forbidden" });
+        }
+        const { payment, activation } = await reconcilePlatformPartnerPayment(platformPayment);
+        return res.json({
+          paymentId: payment.id,
+          status: payment.status,
+          paidAt: payment.paid_at,
+          subscriptionActivated: Boolean(payment.subscription_id || activation?.activated),
+          platformPartner: true,
+        });
+      }
       if (user.role !== "superadmin" && tx.user_id !== user.id) return res.status(403).json({ error: "Forbidden" });
       await ensureWorkspaceAccess(tx.workspace_id, user.id, user.role);
 
@@ -249,9 +302,41 @@ export function registerZiinaRoutes(app: Express) {
       );
       const tx = found.rows[0];
       if (!tx) {
-        await client.query(`UPDATE payment_webhook_events SET processing_status='ignored', processed_at=NOW(), error_message='Unknown payment intent' WHERE id=$1`, [dedup.rows[0].id]);
+        const platformFound = await client.query(
+          `SELECT * FROM platform_partner_payments
+           WHERE provider='ziina' AND (provider_payment_intent_id=$1 OR provider_payment_id=$1)
+           FOR UPDATE`,
+          [providerPaymentId]
+        );
+        const platformPayment = platformFound.rows[0];
+        if (!platformPayment) {
+          await client.query(`UPDATE payment_webhook_events SET processing_status='ignored', processed_at=NOW(), error_message='Unknown payment intent' WHERE id=$1`, [dedup.rows[0].id]);
+          await client.query("COMMIT");
+          return res.status(202).json({ received: true, ignored: true });
+        }
+
+        const normalized = normalizeZiinaStatus(intent?.status || payload.status || payload.event_type);
+        const updatedPlatform = await client.query(
+          `UPDATE platform_partner_payments
+           SET status=$2, provider_payload=$3,
+               paid_at=CASE WHEN $2='completed' THEN COALESCE(paid_at,NOW()) ELSE paid_at END,
+               failure_code=$4, failure_message=$5, updated_at=NOW()
+           WHERE id=$1
+           RETURNING *`,
+          [
+            platformPayment.id,
+            normalized,
+            JSON.stringify(sanitized),
+            intent?.failure_code || null,
+            intent?.failure_message || null,
+          ]
+        );
+        await client.query(`UPDATE payment_webhook_events SET processing_status='processed', processed_at=NOW() WHERE id=$1`, [dedup.rows[0].id]);
         await client.query("COMMIT");
-        return res.status(202).json({ received: true, ignored: true });
+        if (updatedPlatform.rows[0]?.status === "completed") {
+          await activatePlatformPartnerPayment(updatedPlatform.rows[0].id, intent?.status || "completed");
+        }
+        return res.json({ received: true, platformPartner: true });
       }
 
       const normalized = normalizeZiinaStatus(intent?.status || payload.status || payload.event_type);

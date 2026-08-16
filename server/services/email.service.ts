@@ -78,6 +78,31 @@ export function resetEmailCache() {
   cacheInvalidate(CACHE_KEYS.panelConfig()).catch(() => {});
 }
 
+export async function sendSystemEmail(params: {
+  to: string;
+  subject: string;
+  html: string;
+  text?: string;
+}) {
+  const config = await getConfig();
+  const configs = await getPanelConfig();
+  const mailer = await getTransporter();
+
+  const companyName = configs?.name || "Your Company";
+  const fromName = config?.fromName || companyName;
+  const fromEmail = config?.fromEmail;
+
+  const info = await mailer.sendMail({
+    from: `"${fromName}" <${fromEmail}>`,
+    to: params.to,
+    subject: params.subject,
+    html: params.html,
+    text: params.text,
+  });
+
+  return { success: true, messageId: info.messageId };
+}
+
 function generateOTPEmailHTML(
   companyName?: string,
   logo?: string,

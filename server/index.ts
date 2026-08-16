@@ -897,6 +897,11 @@ messageStatusUpdater.startCronJob(60);
         "./cron/payment-reconciler.cron.ts"
       );
       paymentReconciler.start();
+
+      const { startPlatformPartnerRenewalScheduler } = await import(
+        "./services/platform-partner-renewal-scheduler"
+      );
+      startPlatformPartnerRenewalScheduler();
     } else {
       diployLogger.success(`Worker ${instanceId} skipping cron jobs (not the leader)`);
     }

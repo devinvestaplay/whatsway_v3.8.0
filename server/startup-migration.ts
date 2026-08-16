@@ -1012,6 +1012,162 @@ const steps: MigrationStep[] = [
       CREATE INDEX IF NOT EXISTS platform_superadmin_controls_superadmin_idx ON platform_superadmin_controls(superadmin_id);
     `,
   },
+  {
+    description: "Create platform partner billing tables (if not exists)",
+    sql: `
+      CREATE TABLE IF NOT EXISTS platform_partner_plans (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        plan_key VARCHAR(80) NOT NULL UNIQUE,
+        name VARCHAR(160) NOT NULL,
+        description TEXT,
+        status VARCHAR(20) NOT NULL DEFAULT 'active',
+        monthly_price NUMERIC(14,2) NOT NULL DEFAULT 0,
+        yearly_price NUMERIC(14,2) NOT NULL DEFAULT 0,
+        currency VARCHAR(12) NOT NULL DEFAULT 'USD',
+        client_limit INTEGER,
+        workspace_limit INTEGER,
+        domain_limit INTEGER,
+        included_credits NUMERIC(14,2) NOT NULL DEFAULT 0,
+        trial_days INTEGER NOT NULL DEFAULT 0,
+        features JSONB NOT NULL DEFAULT '[]'::jsonb,
+        display_order INTEGER NOT NULL DEFAULT 0,
+        created_by VARCHAR REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS platform_partner_plans_status_idx ON platform_partner_plans(status);
+
+      CREATE TABLE IF NOT EXISTS platform_partner_subscriptions (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        superadmin_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        plan_id VARCHAR REFERENCES platform_partner_plans(id) ON DELETE SET NULL,
+        status VARCHAR(24) NOT NULL DEFAULT 'active',
+        billing_cycle VARCHAR(20) NOT NULL DEFAULT 'monthly',
+        start_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        end_date TIMESTAMPTZ,
+        auto_renew BOOLEAN NOT NULL DEFAULT false,
+        client_limit INTEGER,
+        workspace_limit INTEGER,
+        domain_limit INTEGER,
+        included_credits NUMERIC(14,2) NOT NULL DEFAULT 0,
+        price NUMERIC(14,2) NOT NULL DEFAULT 0,
+        currency VARCHAR(12) NOT NULL DEFAULT 'USD',
+        notes TEXT,
+        created_by VARCHAR REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      ALTER TABLE platform_partner_subscriptions
+        ADD COLUMN IF NOT EXISTS renewal_attempts INTEGER NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS last_renewal_attempt_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS next_renewal_attempt_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS cancellation_reason TEXT;
+      CREATE UNIQUE INDEX IF NOT EXISTS platform_partner_subscriptions_one_current_idx
+        ON platform_partner_subscriptions(superadmin_id)
+        WHERE status IN ('active','trialing','past_due');
+      CREATE INDEX IF NOT EXISTS platform_partner_subscriptions_superadmin_idx ON platform_partner_subscriptions(superadmin_id);
+
+      CREATE TABLE IF NOT EXISTS platform_partner_credit_transactions (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        superadmin_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        subscription_id VARCHAR REFERENCES platform_partner_subscriptions(id) ON DELETE SET NULL,
+        transaction_type VARCHAR(30) NOT NULL,
+        credits NUMERIC(14,2) NOT NULL,
+        balance_before NUMERIC(14,2) NOT NULL DEFAULT 0,
+        balance_after NUMERIC(14,2) NOT NULL DEFAULT 0,
+        reference VARCHAR(160),
+        note TEXT,
+        created_by VARCHAR REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS platform_partner_credit_transactions_superadmin_idx
+        ON platform_partner_credit_transactions(superadmin_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS platform_partner_payments (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        superadmin_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        plan_id VARCHAR REFERENCES platform_partner_plans(id) ON DELETE SET NULL,
+        subscription_id VARCHAR REFERENCES platform_partner_subscriptions(id) ON DELETE SET NULL,
+        provider VARCHAR(30) NOT NULL DEFAULT 'ziina',
+        provider_payment_intent_id VARCHAR,
+        provider_payment_id VARCHAR,
+        amount NUMERIC(14,2) NOT NULL DEFAULT 0,
+        currency VARCHAR(12) NOT NULL DEFAULT 'AED',
+        billing_cycle VARCHAR(20) NOT NULL DEFAULT 'monthly',
+        status VARCHAR(30) NOT NULL DEFAULT 'pending',
+        checkout_url TEXT,
+        embedded_url TEXT,
+        provider_payload JSONB,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        failure_code VARCHAR(100),
+        failure_message TEXT,
+        paid_at TIMESTAMPTZ,
+        credited_at TIMESTAMPTZ,
+        created_by VARCHAR REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS platform_partner_payments_superadmin_idx
+        ON platform_partner_payments(superadmin_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS platform_partner_payments_provider_intent_idx
+        ON platform_partner_payments(provider, provider_payment_intent_id);
+
+      CREATE TABLE IF NOT EXISTS platform_partner_invoices (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        superadmin_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        subscription_id VARCHAR REFERENCES platform_partner_subscriptions(id) ON DELETE SET NULL,
+        payment_id VARCHAR REFERENCES platform_partner_payments(id) ON DELETE SET NULL,
+        invoice_number VARCHAR(80) NOT NULL UNIQUE,
+        status VARCHAR(30) NOT NULL DEFAULT 'draft',
+        amount NUMERIC(14,2) NOT NULL DEFAULT 0,
+        currency VARCHAR(12) NOT NULL DEFAULT 'AED',
+        billing_cycle VARCHAR(20) NOT NULL DEFAULT 'monthly',
+        period_start TIMESTAMPTZ,
+        period_end TIMESTAMPTZ,
+        due_at TIMESTAMPTZ,
+        paid_at TIMESTAMPTZ,
+        failure_message TEXT,
+        hosted_url TEXT,
+        pdf_url TEXT,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_by VARCHAR REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS platform_partner_invoices_superadmin_idx
+        ON platform_partner_invoices(superadmin_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS platform_partner_invoices_subscription_idx
+        ON platform_partner_invoices(subscription_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS platform_partner_dunning_events (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        superadmin_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        subscription_id VARCHAR REFERENCES platform_partner_subscriptions(id) ON DELETE SET NULL,
+        invoice_id VARCHAR REFERENCES platform_partner_invoices(id) ON DELETE SET NULL,
+        event_type VARCHAR(60) NOT NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'pending',
+        message TEXT,
+        next_retry_at TIMESTAMPTZ,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS platform_partner_dunning_events_superadmin_idx
+        ON platform_partner_dunning_events(superadmin_id, created_at DESC);
+    `,
+  },
+  {
+    description: "Seed default platform partner plans",
+    sql: `
+      INSERT INTO platform_partner_plans
+        (plan_key, name, description, monthly_price, yearly_price, currency, client_limit, workspace_limit, domain_limit, included_credits, trial_days, features, display_order)
+      SELECT * FROM (VALUES
+        ('starter_partner', 'Starter Partner', 'For new partners launching their first managed clients.', 49, 499, 'USD', 10, 25, 2, 1000, 14, '["White label branding","Client workspace management","Manual credit adjustments"]'::jsonb, 10),
+        ('growth_partner', 'Growth Partner', 'For growing agencies with more clients and workspaces.', 149, 1499, 'USD', 50, 150, 10, 5000, 14, '["Custom domains","Partner billing controls","Priority support"]'::jsonb, 20),
+        ('agency_partner', 'Agency Partner', 'For high-volume partner operations.', 399, 3999, 'USD', 200, 800, 50, 20000, 0, '["Advanced limits","High-volume workspaces","Dedicated onboarding"]'::jsonb, 30)
+      ) AS seed(plan_key, name, description, monthly_price, yearly_price, currency, client_limit, workspace_limit, domain_limit, included_credits, trial_days, features, display_order)
+      WHERE NOT EXISTS (SELECT 1 FROM platform_partner_plans WHERE platform_partner_plans.plan_key = seed.plan_key);
+    `,
+  },
 
   {
     description: "Create marketing CMS logos table (if not exists)",
