@@ -127,7 +127,7 @@ async function seed() {
     const superadminUser = await createUserIfNotExists({
       username: "superadmin",
       password: "Superadmin@123",
-      email: "superadmin@whatsway.com",
+      email: "superadmin@waba.ae",
       firstName: "Super",
       lastName: "Admin",
       role: "superadmin",
@@ -139,7 +139,7 @@ async function seed() {
     await createUserIfNotExists({
       username: "demoadmin",
       password: "Admin@123",
-      email: "demoadmin@whatsway.com",
+      email: "demoadmin@waba.ae",
       firstName: "Demo",
       lastName: "Admin",
       role: "superadmin",

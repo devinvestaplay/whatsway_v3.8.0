@@ -4,8 +4,7 @@ import { z } from "zod";
 import { pool } from "../db";
 import { requireAuth, requireSuperadmin } from "../middlewares/auth.middleware";
 import { resolveUserPermissions } from "../utils/role-permissions";
-import { getStripe } from "../services/payment-gateway.service";
-import { resolvePublicOrigin } from "../services/public-origin";
+import { getStripe, getStripePublishableKey } from "../services/payment-gateway.service";
 
 const BASE = "/api/superadmin/white-label";
 const guard = [requireAuth, requireSuperadmin] as const;
@@ -13,7 +12,7 @@ const guard = [requireAuth, requireSuperadmin] as const;
 const settingsDefaults = {
   platform_name: "Whatsway",
   brand_tagline: "Build AI Agents on WhatsApp that qualify and convert 24/7",
-  support_email: "support@whatsway.com",
+  support_email: "support@waba.ae",
   support_phone: "",
   primary_color: "#16a34a",
   secondary_color: "#111827",
@@ -206,7 +205,8 @@ const topupCheckoutSchema = z.object({
 
 const topupVerifySchema = z.object({
   paymentId: z.string().min(1),
-  sessionId: z.string().min(1),
+  sessionId: z.string().min(1).optional(),
+  paymentIntentId: z.string().min(1).optional(),
 });
 
 const whatsappFeatureCatalog = [
@@ -362,14 +362,6 @@ async function canAccessWorkspace(req: Request, workspaceId: string, db: { query
   return !!result.rows[0];
 }
 
-function requestOrigin(req: Request) {
-  const host = req.get("host");
-  if (!host) return null;
-  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
-  const proto = forwardedProto || req.protocol || "http";
-  return `${proto}://${host}`.replace(/\/+$/, "");
-}
-
 async function applyTopupPaymentCredit(paymentId: string, db: { query: (text: string, params?: any[]) => Promise<any> }) {
   const paymentResult = await db.query(`SELECT * FROM white_label_topup_payments WHERE id=$1 FOR UPDATE`, [paymentId]);
   const payment = paymentResult.rows[0];
@@ -488,8 +480,8 @@ export function registerWhiteLabelRoutes(app: Express) {
 
     const stripe = await getStripe();
     if (!stripe) return res.status(400).json({ error: "Stripe is not configured or active" });
-    const origin = requestOrigin(req) || (await resolvePublicOrigin());
-    if (!origin) return res.status(400).json({ error: "Public origin is not configured yet" });
+    const publishableKey = await getStripePublishableKey();
+    if (!publishableKey) return res.status(400).json({ error: "Stripe publishable key is not configured" });
 
     const payment = await pool.query(
       `INSERT INTO white_label_topup_payments (client_id, workspace_id, topup_option_id, provider, amount, currency, points, label, status, created_by)
@@ -497,56 +489,70 @@ export function registerWhiteLabelRoutes(app: Express) {
       [clientId, workspaceId, option.id, option.amount, option.currency, option.points, option.label, (req.user as any)?.id || clientId]
     );
     const paymentRow = payment.rows[0];
-    const session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      payment_method_types: ["card"],
-      line_items: [{
-        price_data: {
-          currency: String(option.currency || "USD").toLowerCase(),
-          product_data: { name: option.label },
-          unit_amount: Math.round(Number(option.amount || 0) * 100),
-        },
-        quantity: 1,
-      }],
-      success_url: `${origin}/billing?topup_session_id={CHECKOUT_SESSION_ID}&topup_payment_id=${paymentRow.id}`,
-      cancel_url: `${origin}/billing?topup_cancelled=1`,
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: Math.round(Number(option.amount || 0) * 100),
+      currency: String(option.currency || "USD").toLowerCase(),
+      automatic_payment_methods: { enabled: true },
       metadata: {
         purpose: "white_label_credit_topup",
         topupPaymentId: paymentRow.id,
         clientId,
         workspaceId: workspaceId || "",
       },
+      description: option.label,
     });
 
     const updated = await pool.query(
-      `UPDATE white_label_topup_payments SET provider_session_id=$2, checkout_url=$3, metadata=$4, updated_at=NOW() WHERE id=$1 RETURNING *`,
-      [paymentRow.id, session.id, session.url || null, JSON.stringify(session.metadata || {})]
+      `UPDATE white_label_topup_payments
+       SET provider_session_id=$2, provider_payment_intent_id=$2, embedded_url=NULL, metadata=$3, updated_at=NOW()
+       WHERE id=$1 RETURNING *`,
+      [paymentRow.id, paymentIntent.id, JSON.stringify(paymentIntent.metadata || {})]
     );
-    res.status(201).json({ checkoutUrl: session.url, payment: updated.rows[0] });
+    res.status(201).json({
+      mode: "embedded",
+      paymentId: paymentRow.id,
+      paymentIntentId: paymentIntent.id,
+      clientSecret: paymentIntent.client_secret,
+      publishableKey,
+      payment: updated.rows[0],
+    });
   });
 
   app.post("/api/topups/stripe/verify", requireAuth, async (req, res) => {
     const clientId = currentClientId(req);
     if (!clientId) return res.status(403).json({ error: "Credit topups are available for client accounts only" });
     const parsed = topupVerifySchema.parse(req.body);
+    if (!parsed.sessionId && !parsed.paymentIntentId) {
+      return res.status(400).json({ error: "Missing payment confirmation id" });
+    }
+
     const existing = await pool.query(
-      `SELECT * FROM white_label_topup_payments WHERE id=$1 AND client_id=$2 AND provider_session_id=$3`,
-      [parsed.paymentId, clientId, parsed.sessionId]
+      `SELECT * FROM white_label_topup_payments
+       WHERE id=$1 AND client_id=$2 AND (provider_session_id=$3 OR provider_payment_intent_id=$4)`,
+      [parsed.paymentId, clientId, parsed.sessionId || null, parsed.paymentIntentId || null]
     );
     if (!existing.rows[0]) return res.status(404).json({ error: "Topup payment not found" });
 
     const stripe = await getStripe();
     if (!stripe) return res.status(400).json({ error: "Stripe is not configured or active" });
-    const session = await stripe.checkout.sessions.retrieve(parsed.sessionId);
-    if (session.payment_status !== "paid") {
-      await pool.query(`UPDATE white_label_topup_payments SET status=$2, updated_at=NOW() WHERE id=$1`, [parsed.paymentId, session.status || "pending"]);
-      return res.status(400).json({ error: "Stripe payment is not paid yet" });
+    let paymentIntentId = parsed.paymentIntentId || null;
+    if (parsed.sessionId) {
+      const session = await stripe.checkout.sessions.retrieve(parsed.sessionId);
+      if (session.payment_status !== "paid") {
+        await pool.query(`UPDATE white_label_topup_payments SET status=$2, updated_at=NOW() WHERE id=$1`, [parsed.paymentId, session.status || "pending"]);
+        return res.status(400).json({ error: "Payment is not paid yet" });
+      }
+      paymentIntentId =
+        typeof session.payment_intent === "string"
+          ? session.payment_intent
+          : (session.payment_intent as any)?.id || null;
+    } else if (paymentIntentId) {
+      const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
+      if (intent.status !== "succeeded") {
+        await pool.query(`UPDATE white_label_topup_payments SET status=$2, updated_at=NOW() WHERE id=$1`, [parsed.paymentId, intent.status || "pending"]);
+        return res.status(400).json({ error: "Payment is not paid yet" });
+      }
     }
-
-    const paymentIntentId =
-      typeof session.payment_intent === "string"
-        ? session.payment_intent
-        : (session.payment_intent as any)?.id || null;
     const db = await pool.connect();
     try {
       await db.query("BEGIN");

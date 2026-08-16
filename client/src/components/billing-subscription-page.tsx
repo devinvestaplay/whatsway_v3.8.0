@@ -22,9 +22,11 @@ import { useAuth } from "@/contexts/auth-context";
 import type { PlanData, PlanFeature, PlanPermissions, SubscriptionResponse } from "@/types/types";
 import { useLocation } from "wouter";
 import { useTranslation } from "@/lib/i18n";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
+import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
+import { loadStripe, Stripe } from "@stripe/stripe-js";
 
 const currencySymbolMap: Record<string, string> = {
   USD: "$",
@@ -61,6 +63,79 @@ function formatMoney(amount: string | number, currency?: string | null) {
   }
 }
 
+type EmbeddedTopupCheckout = {
+  paymentId: string;
+  paymentIntentId: string;
+  clientSecret: string;
+  publishableKey: string;
+  option: any;
+};
+
+function TopupPaymentForm({
+  checkout,
+  onCancel,
+  onSuccess,
+}: {
+  checkout: EmbeddedTopupCheckout;
+  onCancel: () => void;
+  onSuccess: (balance: number) => void;
+}) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const { toast } = useToast();
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!stripe || !elements) return;
+    setSubmitting(true);
+    try {
+      const { error, paymentIntent } = await stripe.confirmPayment({
+        elements,
+        redirect: "if_required",
+      });
+      if (error) throw new Error(error.message || "Payment could not be completed.");
+      if (!paymentIntent?.id) throw new Error("Payment confirmation was not returned.");
+
+      const response = await apiRequest("POST", "/api/topups/stripe/verify", {
+        paymentId: checkout.paymentId,
+        paymentIntentId: paymentIntent.id,
+      });
+      const data = await response.json();
+      onSuccess(Number(data.balance || 0));
+    } catch (error: any) {
+      toast({
+        title: "Payment failed",
+        description: error.message || "Unable to complete the secure payment.",
+        variant: "destructive",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-4 space-y-4 rounded-xl border border-green-100 bg-green-50/40 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-bold text-gray-900">Secure checkout</p>
+          <p className="text-xs text-gray-500">
+            {Number(checkout.option.points || 0).toLocaleString()} credits - {formatMoney(checkout.option.amount, checkout.option.currency)}
+          </p>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={onCancel} disabled={submitting}>
+          Cancel
+        </Button>
+      </div>
+      <PaymentElement />
+      <Button type="submit" className="w-full bg-green-700 hover:bg-green-800" disabled={!stripe || submitting}>
+        {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CreditCard className="mr-2 h-4 w-4" />}
+        Pay securely
+      </Button>
+    </form>
+  );
+}
+
 export default function BillingSubscriptionPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { t } = useTranslation();
   const { user, currency: userCurrency, currencySymbol: userCurrencySymbol } = useAuth();
@@ -74,6 +149,8 @@ export default function BillingSubscriptionPage({ embedded = false }: { embedded
   const [buyingTopupId, setBuyingTopupId] = useState<string | null>(null);
   const [verifyingTopup, setVerifyingTopup] = useState(false);
   const [topupReturnHandled, setTopupReturnHandled] = useState(false);
+  const [embeddedTopup, setEmbeddedTopup] = useState<EmbeddedTopupCheckout | null>(null);
+  const [topupStripePromise, setTopupStripePromise] = useState<Promise<Stripe | null> | null>(null);
   const canUseTopups = !!user?.id && user.role !== "superadmin";
 
   const handleCancelSubscription = async (subscriptionId: string) => {
@@ -180,19 +257,30 @@ export default function BillingSubscriptionPage({ embedded = false }: { embedded
   const handleBuyTopup = async (topupOptionId: string) => {
     setBuyingTopupId(topupOptionId);
     try {
+      const option = topupOptions.find((item) => item.id === topupOptionId);
       const response = await apiRequest("POST", "/api/topups/stripe/checkout", {
         topupOptionId,
         workspaceId: selectedWorkspaceId || null,
       });
       const data = await response.json();
-      if (!data.checkoutUrl) throw new Error("Stripe did not return a checkout URL");
-      window.location.href = data.checkoutUrl;
+      if (!data.clientSecret || !data.publishableKey || !data.paymentId || !data.paymentIntentId) {
+        throw new Error("Secure checkout could not be initialized.");
+      }
+      setTopupStripePromise(loadStripe(data.publishableKey));
+      setEmbeddedTopup({
+        paymentId: data.paymentId,
+        paymentIntentId: data.paymentIntentId,
+        clientSecret: data.clientSecret,
+        publishableKey: data.publishableKey,
+        option: option || data.payment || {},
+      });
     } catch (error: any) {
       toast({
         title: "Topup checkout failed",
-        description: error.message || "Unable to start Stripe checkout.",
+        description: error.message || "Unable to start secure checkout.",
         variant: "destructive",
       });
+    } finally {
       setBuyingTopupId(null);
     }
   };
@@ -263,10 +351,40 @@ export default function BillingSubscriptionPage({ embedded = false }: { embedded
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div>
                   <h3 className="text-lg font-bold text-gray-900">Credit Topups</h3>
-                  <p className="text-sm text-gray-500">Buy prepaid credits with Stripe.</p>
+                  <p className="text-sm text-gray-500">Buy prepaid credits with secure in-page checkout.</p>
                 </div>
                 <CreditCard className="h-5 w-5 text-green-700" />
               </div>
+              {embeddedTopup && topupStripePromise && (
+                <Elements
+                  stripe={topupStripePromise}
+                  options={{
+                    clientSecret: embeddedTopup.clientSecret,
+                    appearance: {
+                      theme: "stripe",
+                      variables: { colorPrimary: "#15803d", borderRadius: "8px" },
+                    },
+                  }}
+                >
+                  <TopupPaymentForm
+                    checkout={embeddedTopup}
+                    onCancel={() => {
+                      setEmbeddedTopup(null);
+                      setTopupStripePromise(null);
+                    }}
+                    onSuccess={(balance) => {
+                      toast({
+                        title: "Credits added",
+                        description: `Your new credit balance is ${balance.toLocaleString()}.`,
+                      });
+                      setEmbeddedTopup(null);
+                      setTopupStripePromise(null);
+                      queryClient.invalidateQueries({ queryKey: ["/api/topups/balance"] });
+                      queryClient.invalidateQueries({ queryKey: ["/api/channels"] });
+                    }}
+                  />
+                </Elements>
+              )}
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {topupOptions.map((option) => (
                   <div key={option.id} className="rounded-lg border border-gray-200 p-4">
@@ -278,7 +396,7 @@ export default function BillingSubscriptionPage({ embedded = false }: { embedded
                     <p className="mt-1 text-sm text-gray-500">{formatMoney(option.amount, option.currency)}</p>
                     <Button
                       className="mt-4 w-full bg-green-700 hover:bg-green-800"
-                      disabled={buyingTopupId === option.id || verifyingTopup}
+                      disabled={buyingTopupId === option.id || verifyingTopup || !!embeddedTopup}
                       onClick={() => handleBuyTopup(option.id)}
                     >
                       {buyingTopupId === option.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CreditCard className="mr-2 h-4 w-4" />}
