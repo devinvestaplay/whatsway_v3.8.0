@@ -97,6 +97,22 @@ type PlanConfigRow = {
   disabled_features: string[];
   gateway_metadata?: Record<string, unknown>;
 };
+
+const planTermOptions = [
+  { value: "quarterly", label: "Quarterly - 3 months", suffix: "3 months" },
+  { value: "half_yearly", label: "Half-yearly - 6 months", suffix: "6 months" },
+  { value: "nine_month", label: "9-month term", suffix: "9 months" },
+  { value: "annual", label: "Annual - 12 months", suffix: "year" },
+] as const;
+
+function planTermSuffix(term?: string | null) {
+  return planTermOptions.find((option) => option.value === term)?.suffix || "6 months";
+}
+
+function normalizePlanTerm(term?: string | null) {
+  return planTermOptions.some((option) => option.value === term) ? String(term) : "half_yearly";
+}
+
 type AddonCatalogRow = { id: string; addon_key: string; addon_name: string; description?: string; cost_price: string; points: string; label?: string; status: string; display_order: number };
 type TopupOptionRow = { id: string; display_order: number; currency: string; amount: string; points: string; label: string; status: string };
 type PartnerSettings = {
@@ -301,7 +317,7 @@ export default function WhiteLabel() {
   });
 
   const updatePoints = useMutation({
-    mutationFn: () => apiRequest("PATCH", `${API}/workspaces/${pointForm?.workspaceId}/points`, { transactionType: pointForm?.transactionType, credits: Number(pointForm?.credits || 0), note: pointForm?.note || null }),
+    mutationFn: () => apiRequest("PATCH", `${API}/workspaces/${pointForm?.workspaceId}/points`, { transactionType: pointForm?.transactionType, credits: Number(pointForm?.credits || 0), note: pointForm?.note || null }).then((res) => res.json()),
     onSuccess: (data: { points?: unknown }) => {
       if (pointsWorkspace && data?.points !== undefined) {
         setPointsWorkspace({ ...pointsWorkspace, points: data.points as WorkspaceRow["points"] });
@@ -369,7 +385,7 @@ export default function WhiteLabel() {
       status: plan.status,
       displayPrice: Number(plan.display_price || 0),
       costPrice: Number(plan.cost_price || 0),
-      billingCycle: plan.billing_cycle || "monthly",
+      billingCycle: normalizePlanTerm(plan.billing_cycle),
       badge: plan.badge || null,
       description: plan.description || null,
       hideUsageCounts: !!plan.hide_usage_counts,
@@ -378,6 +394,34 @@ export default function WhiteLabel() {
       gatewayMetadata: plan.gateway_metadata || {},
     }),
     onSuccess: () => { invalidateAll(); toast({ title: "Plan saved" }); },
+  });
+
+  const createPlanConfig = useMutation({
+    mutationFn: async () => {
+      const name = `New Plan ${(planConfigs?.rows?.length || 0) + 1}`;
+      const response = await apiRequest("POST", `${API}/billing/plans`, {
+        planKey: `custom_plan_${Date.now()}`,
+        planName: name,
+        status: "active",
+        displayPrice: 0,
+        costPrice: 0,
+        billingCycle: "half_yearly",
+        badge: "Custom",
+        description: "",
+        hideUsageCounts: false,
+        enabledFeatures: [],
+        disabledFeatures: (features?.rows ?? []).map((feature) => feature.key),
+        gatewayMetadata: {},
+      });
+      return response.json();
+    },
+    onSuccess: (plan: PlanConfigRow) => {
+      invalidateAll();
+      setSelectedPlanId(plan.id);
+      setSelectedFeatures([]);
+      setPlanPanel("customization");
+      toast({ title: "Plan created" });
+    },
   });
 
   const saveAddon = useMutation({
@@ -647,16 +691,24 @@ export default function WhiteLabel() {
               <Card>
                 <CardContent className="p-0">
                   <div className="border-b p-4">
-                    <label className="mb-2 block text-xs font-semibold uppercase text-slate-500">Plan</label>
-                    <select className="h-10 min-w-[260px] rounded-md border bg-white px-3 text-sm" value={selectedPlan.id} onChange={(e) => { setSelectedPlanId(e.target.value); setSelectedFeatures([]); }}>
-                      {(planConfigs?.rows ?? []).map((plan) => <option key={plan.id} value={plan.id}>{plan.plan_name}</option>)}
-                    </select>
+                    <div className="flex flex-wrap items-end justify-between gap-3">
+                      <label className="block text-xs font-semibold uppercase text-slate-500">
+                        <span className="mb-2 block">Plan</span>
+                        <select className="h-10 min-w-[260px] rounded-md border bg-white px-3 text-sm normal-case text-slate-900" value={selectedPlan.id} onChange={(e) => { setSelectedPlanId(e.target.value); setSelectedFeatures([]); }}>
+                          {(planConfigs?.rows ?? []).map((plan) => <option key={plan.id} value={plan.id}>{plan.plan_name}</option>)}
+                        </select>
+                      </label>
+                      <Button onClick={() => createPlanConfig.mutate()} disabled={createPlanConfig.isPending}>
+                        <Plus className="mr-2 h-4 w-4" />
+                        New Plan
+                      </Button>
+                    </div>
                   </div>
                   <div className="grid gap-4 p-4 xl:grid-cols-[260px_1fr]">
                     <div className="rounded-lg border p-6 text-center">
                       <h3 className="text-xl font-bold">{selectedPlan.plan_name}</h3>
                       <StatusPill value={selectedPlan.status} />
-                      <p className="mt-6 text-3xl font-black">{formatNumber(selectedPlan.display_price)}<span className="text-sm font-normal text-slate-500">/{selectedPlan.billing_cycle === "annual" ? "year" : "month"}</span></p>
+                      <p className="mt-6 text-3xl font-black">{formatNumber(selectedPlan.display_price)}<span className="text-sm font-normal text-slate-500"> / {planTermSuffix(selectedPlan.billing_cycle)}</span></p>
                       <Button className="mt-6 w-full" variant="outline">Price Calculator</Button>
                     </div>
                     <div>
@@ -689,7 +741,12 @@ export default function WhiteLabel() {
 
                       {planPanel === "billing" && (
                         <div className="grid gap-4 rounded-lg border p-4 md:grid-cols-2">
-                          <InputField label="Billing Cycle" value={selectedPlan.billing_cycle || "monthly"} onChange={(v) => updateSelectedPlan({ billing_cycle: v })} />
+                          <label className="space-y-2 text-sm font-semibold text-slate-700">
+                            <span>Plan Term</span>
+                            <select className="h-10 w-full rounded-md border bg-white px-3 text-sm font-normal" value={normalizePlanTerm(selectedPlan.billing_cycle) || "half_yearly"} onChange={(e) => updateSelectedPlan({ billing_cycle: e.target.value })}>
+                              {planTermOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                            </select>
+                          </label>
                           <InputField label="Badge" value={selectedPlan.badge || ""} onChange={(v) => updateSelectedPlan({ badge: v })} />
                           <InputField label="Stripe Price ID" value={String((selectedPlan.gateway_metadata as any)?.stripePriceId || "")} onChange={(v) => updateSelectedPlan({ gateway_metadata: { ...(selectedPlan.gateway_metadata || {}), stripePriceId: v } })} />
                           <InputField label="Gateway Plan ID" value={String((selectedPlan.gateway_metadata as any)?.gatewayPlanId || "")} onChange={(v) => updateSelectedPlan({ gateway_metadata: { ...(selectedPlan.gateway_metadata || {}), gatewayPlanId: v } })} />

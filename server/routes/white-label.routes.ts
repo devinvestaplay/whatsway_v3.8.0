@@ -5,6 +5,7 @@ import { pool } from "../db";
 import { requireAuth, requireSuperadmin } from "../middlewares/auth.middleware";
 import { resolveUserPermissions } from "../utils/role-permissions";
 import { getStripe, getStripePublishableKey } from "../services/payment-gateway.service";
+import { resolveTenantFromRequest } from "../services/tenant-domain.service";
 
 const BASE = "/api/superadmin/white-label";
 const guard = [requireAuth, requireSuperadmin] as const;
@@ -169,7 +170,7 @@ const planConfigSchema = z.object({
   status: z.enum(["active", "archived", "inactive"]).default("active"),
   displayPrice: z.coerce.number().min(0).default(0),
   costPrice: z.coerce.number().min(0).default(0),
-  billingCycle: z.enum(["monthly", "annual"]).default("monthly"),
+  billingCycle: z.enum(["quarterly", "half_yearly", "nine_month", "annual"]).default("half_yearly"),
   badge: z.string().max(80).optional().nullable(),
   description: z.string().max(1000).optional().nullable(),
   hideUsageCounts: z.boolean().default(false),
@@ -325,6 +326,52 @@ function currentClientId(req: Request) {
 function scopedSuperadminId(req: Request) {
   const user = (req.user || (req as any).session?.user) as any;
   return user?.role === "superadmin" && user.createdBy ? user.id : null;
+}
+
+function planOwnerSuperadminId(req: Request) {
+  const user = (req.user || (req as any).session?.user) as any;
+  return user?.role === "superadmin" ? user.id : null;
+}
+
+function normalizePlanTerm(value?: string | null) {
+  if (value === "annual") return "annual";
+  if (value === "quarterly") return "quarterly";
+  if (value === "nine_month") return "nine_month";
+  return "half_yearly";
+}
+
+async function ensurePlanConfigsForOwner(ownerSuperadminId: string) {
+  const existing = await pool.query(
+    `SELECT id FROM white_label_plan_configs WHERE owner_superadmin_id=$1 LIMIT 1`,
+    [ownerSuperadminId]
+  );
+  if (existing.rows[0]) return;
+
+  await pool.query(
+    `INSERT INTO white_label_plan_configs
+       (plan_key, plan_name, status, display_price, cost_price, billing_cycle, badge, description,
+        hide_usage_counts, enabled_features, disabled_features, gateway_metadata, owner_superadmin_id, created_by)
+     SELECT plan_key, plan_name, status, display_price, cost_price,
+            CASE WHEN billing_cycle='annual' THEN 'annual' ELSE 'half_yearly' END,
+            badge, description, hide_usage_counts,
+            COALESCE(enabled_features, '[]'::jsonb),
+            COALESCE(disabled_features, '[]'::jsonb),
+            COALESCE(gateway_metadata, '{}'::jsonb),
+            $1, $1
+       FROM white_label_plan_configs
+      WHERE owner_superadmin_id IS NULL
+      ORDER BY
+        CASE plan_key
+          WHEN 'waba_demo' THEN 1
+          WHEN 'activated' THEN 2
+          WHEN 'waba_business' THEN 3
+          WHEN 'waba_individual' THEN 4
+          ELSE 99
+        END,
+        created_at ASC
+      ON CONFLICT DO NOTHING`,
+    [ownerSuperadminId]
+  );
 }
 
 function appendClientScope(req: Request, clauses: string[], params: any[], alias = "u") {
@@ -1060,10 +1107,44 @@ export function registerWhiteLabelRoutes(app: Express) {
     res.json({ rows: whatsappFeatureCatalog });
   });
 
-  app.get(`${BASE}/billing/plans`, ...guard, async (_req, res) => {
+  app.get("/api/white-label/billing/plans", async (req, res) => {
+    const tenant = await resolveTenantFromRequest(req);
+    const ownerSuperadminId = tenant?.superadminId || null;
+    if (ownerSuperadminId) {
+      await ensurePlanConfigsForOwner(ownerSuperadminId);
+    }
+    const params: any[] = [];
+    const ownerClause = ownerSuperadminId ? "owner_superadmin_id=$1" : "owner_superadmin_id IS NULL";
+    if (ownerSuperadminId) params.push(ownerSuperadminId);
+    const result = await pool.query(
+      `SELECT id, plan_key, plan_name, status, display_price, cost_price, billing_cycle, badge,
+              description, hide_usage_counts, enabled_features, disabled_features, gateway_metadata,
+              owner_superadmin_id, created_at, updated_at
+         FROM white_label_plan_configs
+        WHERE ${ownerClause}
+          AND status='active'
+        ORDER BY
+          CASE plan_key
+            WHEN 'waba_demo' THEN 1
+            WHEN 'activated' THEN 2
+            WHEN 'waba_business' THEN 3
+            WHEN 'waba_individual' THEN 4
+            ELSE 99
+          END,
+          created_at ASC`,
+      params
+    );
+    res.json({ rows: result.rows, tenant: tenant ? { superadminId: tenant.superadminId, domain: tenant.domain } : null });
+  });
+
+  app.get(`${BASE}/billing/plans`, ...guard, async (req, res) => {
+    const ownerSuperadminId = planOwnerSuperadminId(req);
+    if (!ownerSuperadminId) return res.status(403).json({ error: "Superadmin plan owner not resolved" });
+    await ensurePlanConfigsForOwner(ownerSuperadminId);
     const result = await pool.query(`
       SELECT *
       FROM white_label_plan_configs
+      WHERE owner_superadmin_id=$1
       ORDER BY
         CASE plan_key
           WHEN 'waba_demo' THEN 1
@@ -1073,39 +1154,67 @@ export function registerWhiteLabelRoutes(app: Express) {
           ELSE 99
         END,
         created_at ASC
-    `);
+    `, [ownerSuperadminId]);
     res.json({ rows: result.rows });
   });
 
   app.post(`${BASE}/billing/plans`, ...guard, async (req, res) => {
+    const ownerSuperadminId = planOwnerSuperadminId(req);
+    if (!ownerSuperadminId) return res.status(403).json({ error: "Superadmin plan owner not resolved" });
     const parsed = planConfigSchema.parse(req.body);
     const planKey = parsed.planKey || parsed.planName.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
-    const inserted = await pool.query(
-      `INSERT INTO white_label_plan_configs (plan_key, plan_name, status, display_price, cost_price, billing_cycle, badge, description, hide_usage_counts, enabled_features, disabled_features, gateway_metadata, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-       ON CONFLICT (plan_key) DO UPDATE SET
-         plan_name=EXCLUDED.plan_name,
-         status=EXCLUDED.status,
-         display_price=EXCLUDED.display_price,
-         cost_price=EXCLUDED.cost_price,
-         billing_cycle=EXCLUDED.billing_cycle,
-         badge=EXCLUDED.badge,
-         description=EXCLUDED.description,
-         hide_usage_counts=EXCLUDED.hide_usage_counts,
-         enabled_features=EXCLUDED.enabled_features,
-         disabled_features=EXCLUDED.disabled_features,
-         gateway_metadata=EXCLUDED.gateway_metadata,
-         updated_at=NOW()
-       RETURNING *`,
-      [planKey, parsed.planName, parsed.status, parsed.displayPrice, parsed.costPrice, parsed.billingCycle, parsed.badge || null, parsed.description || null, parsed.hideUsageCounts, JSON.stringify(parsed.enabledFeatures), JSON.stringify(parsed.disabledFeatures), JSON.stringify(parsed.gatewayMetadata), actorId(req)]
-    );
-    await audit(req, "billing.plan.upsert", "white_label_plan_config", inserted.rows[0].id, null, inserted.rows[0]);
-    res.status(201).json(inserted.rows[0]);
+    const values = [
+      planKey,
+      parsed.planName,
+      parsed.status,
+      parsed.displayPrice,
+      parsed.costPrice,
+      normalizePlanTerm(parsed.billingCycle),
+      parsed.badge || null,
+      parsed.description || null,
+      parsed.hideUsageCounts,
+      JSON.stringify(parsed.enabledFeatures),
+      JSON.stringify(parsed.disabledFeatures),
+      JSON.stringify(parsed.gatewayMetadata),
+      ownerSuperadminId,
+      actorId(req),
+    ];
+    const existing = await pool.query(`SELECT * FROM white_label_plan_configs WHERE owner_superadmin_id=$1 AND plan_key=$2`, [ownerSuperadminId, planKey]);
+    const result = existing.rows[0]
+      ? await pool.query(
+          `UPDATE white_label_plan_configs SET
+             plan_name=$1,
+             status=$2,
+             display_price=$3,
+             cost_price=$4,
+             billing_cycle=$5,
+             badge=$6,
+             description=$7,
+             hide_usage_counts=$8,
+             enabled_features=$9,
+             disabled_features=$10,
+             gateway_metadata=$11,
+             updated_at=NOW()
+           WHERE id=$12
+           RETURNING *`,
+          [...values.slice(1, 12), existing.rows[0].id]
+        )
+      : await pool.query(
+          `INSERT INTO white_label_plan_configs
+             (plan_key, plan_name, status, display_price, cost_price, billing_cycle, badge, description, hide_usage_counts, enabled_features, disabled_features, gateway_metadata, owner_superadmin_id, created_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+           RETURNING *`,
+          values
+        );
+    await audit(req, existing.rows[0] ? "billing.plan.update" : "billing.plan.create", "white_label_plan_config", result.rows[0].id, existing.rows[0] || null, result.rows[0]);
+    res.status(existing.rows[0] ? 200 : 201).json(result.rows[0]);
   });
 
   app.patch(`${BASE}/billing/plans/:id`, ...guard, async (req, res) => {
+    const ownerSuperadminId = planOwnerSuperadminId(req);
+    if (!ownerSuperadminId) return res.status(403).json({ error: "Superadmin plan owner not resolved" });
     const parsed = planConfigSchema.partial().parse(req.body);
-    const before = await pool.query(`SELECT * FROM white_label_plan_configs WHERE id=$1`, [req.params.id]);
+    const before = await pool.query(`SELECT * FROM white_label_plan_configs WHERE id=$1 AND owner_superadmin_id=$2`, [req.params.id, ownerSuperadminId]);
     if (!before.rows[0]) return res.status(404).json({ error: "Plan config not found" });
     const current = before.rows[0];
     const updated = await pool.query(
@@ -1129,7 +1238,7 @@ export function registerWhiteLabelRoutes(app: Express) {
         parsed.status ?? current.status,
         parsed.displayPrice ?? current.display_price,
         parsed.costPrice ?? current.cost_price,
-        parsed.billingCycle ?? current.billing_cycle,
+        normalizePlanTerm(parsed.billingCycle ?? current.billing_cycle),
         parsed.badge ?? current.badge,
         parsed.description ?? current.description,
         parsed.hideUsageCounts ?? current.hide_usage_counts,

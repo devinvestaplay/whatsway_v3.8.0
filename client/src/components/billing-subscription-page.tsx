@@ -71,6 +71,36 @@ type EmbeddedTopupCheckout = {
   option: any;
 };
 
+type WhiteLabelPlanConfig = {
+  id: string;
+  plan_key: string;
+  plan_name: string;
+  status: string;
+  display_price: string | number;
+  cost_price?: string | number;
+  billing_cycle?: string | null;
+  badge?: string | null;
+  description?: string | null;
+  enabled_features?: string[];
+};
+
+const planTermLabels: Record<string, string> = {
+  quarterly: "3 months",
+  half_yearly: "6 months",
+  nine_month: "9 months",
+  annual: "year",
+};
+
+function formatPlanTerm(term?: string | null) {
+  return planTermLabels[term || ""] || "6 months";
+}
+
+function formatPlanFeatureLabel(featureKey: string) {
+  return featureKey
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 function TopupPaymentForm({
   checkout,
   onCancel,
@@ -209,6 +239,10 @@ export default function BillingSubscriptionPage({ embedded = false }: { embedded
     queryFn: () => apiRequest("GET", "/api/channels").then((res) => res.json()),
     enabled: canUseTopups,
   });
+  const { data: whiteLabelPlansData } = useQuery<{ rows: WhiteLabelPlanConfig[] }>({
+    queryKey: ["/api/white-label/billing/plans"],
+    queryFn: () => apiRequest("GET", "/api/white-label/billing/plans").then((res) => res.json()),
+  });
   const workspaces = Array.isArray(workspacesData)
     ? workspacesData
     : Array.isArray(workspacesData?.data)
@@ -217,6 +251,7 @@ export default function BillingSubscriptionPage({ embedded = false }: { embedded
         ? workspacesData.channels
         : [];
   const topupOptions = Array.isArray(topupOptionsData?.rows) ? topupOptionsData.rows : [];
+  const whiteLabelPlans = Array.isArray(whiteLabelPlansData?.rows) ? whiteLabelPlansData.rows : [];
 
   useEffect(() => {
     if (!canUseTopups || topupReturnHandled || typeof window === "undefined") return;
@@ -338,7 +373,7 @@ export default function BillingSubscriptionPage({ embedded = false }: { embedded
                   onChange={(event) => setSelectedWorkspaceId(event.target.value)}
                 >
                   <option value="">Client balance only</option>
-                  {workspaces.map((workspace) => (
+                  {workspaces.map((workspace: any) => (
                     <option key={workspace.id} value={workspace.id}>
                       {workspace.name || workspace.phoneNumber || workspace.id}
                     </option>
@@ -410,6 +445,55 @@ export default function BillingSubscriptionPage({ embedded = false }: { embedded
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        </section>
+      )}
+      {whiteLabelPlans.length > 0 && (
+        <section className="p-6 pb-0">
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Available Plans</h3>
+                <p className="text-sm text-gray-500">Plans configured by your provider for this domain.</p>
+              </div>
+              <Crown className="h-5 w-5 text-green-700" />
+            </div>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              {whiteLabelPlans.map((plan) => {
+                const features = Array.isArray(plan.enabled_features) ? plan.enabled_features.slice(0, 4) : [];
+                return (
+                  <div key={plan.id} className="flex min-h-[220px] flex-col rounded-lg border border-gray-200 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h4 className="font-bold text-gray-900">{plan.plan_name}</h4>
+                        {plan.description && <p className="mt-1 line-clamp-2 text-xs text-gray-500">{plan.description}</p>}
+                      </div>
+                      {plan.badge && (
+                        <span className="rounded-full bg-green-100 px-2 py-1 text-[10px] font-bold uppercase text-green-700">
+                          {plan.badge}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-4 text-2xl font-black text-gray-900">
+                      {Number(plan.display_price || 0).toLocaleString()}
+                      <span className="ml-1 text-xs font-semibold text-gray-500">/ {formatPlanTerm(plan.billing_cycle)}</span>
+                    </p>
+                    <ul className="mt-4 flex-1 space-y-2">
+                      {features.map((feature) => (
+                        <li key={feature} className="flex items-start gap-2 text-xs text-gray-600">
+                          <Check className="mt-0.5 h-3.5 w-3.5 flex-none text-green-600" />
+                          <span>{formatPlanFeatureLabel(feature)}</span>
+                        </li>
+                      ))}
+                      {features.length === 0 && <li className="text-xs text-gray-400">Features will be confirmed by your provider.</li>}
+                    </ul>
+                    <Button className="mt-4 w-full" variant="outline" onClick={() => setLocation("/settings?tab=billing")}>
+                      View Billing
+                    </Button>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </section>

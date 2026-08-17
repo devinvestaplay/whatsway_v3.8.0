@@ -787,22 +787,69 @@ const steps: MigrationStep[] = [
     sql: `
       CREATE TABLE IF NOT EXISTS white_label_plan_configs (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-        plan_key VARCHAR(80) NOT NULL UNIQUE,
+        plan_key VARCHAR(80) NOT NULL,
         plan_name TEXT NOT NULL,
         status VARCHAR(20) NOT NULL DEFAULT 'active',
         display_price NUMERIC(10,2) DEFAULT 0,
         cost_price NUMERIC(10,2) DEFAULT 0,
-        billing_cycle VARCHAR(20) DEFAULT 'monthly',
+        billing_cycle VARCHAR(20) DEFAULT 'half_yearly',
         badge VARCHAR(80),
         description TEXT,
         hide_usage_counts BOOLEAN DEFAULT false,
         enabled_features JSONB DEFAULT '[]'::jsonb,
         disabled_features JSONB DEFAULT '[]'::jsonb,
         gateway_metadata JSONB DEFAULT '{}'::jsonb,
+        owner_superadmin_id VARCHAR REFERENCES users(id) ON DELETE CASCADE,
         created_by VARCHAR REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
+    `,
+  },
+
+  addColumnIfNotExists(
+    "white_label_plan_configs",
+    "owner_superadmin_id",
+    "VARCHAR REFERENCES users(id) ON DELETE CASCADE"
+  ),
+
+  {
+    description: "Scope white-label plan configs per superadmin",
+    sql: `
+      ALTER TABLE white_label_plan_configs ALTER COLUMN billing_cycle SET DEFAULT 'half_yearly';
+
+      UPDATE white_label_plan_configs
+         SET billing_cycle = 'half_yearly'
+       WHERE billing_cycle IS NULL OR billing_cycle = 'monthly';
+
+      UPDATE white_label_plan_configs p
+         SET owner_superadmin_id = p.created_by
+        FROM users u
+       WHERE p.owner_superadmin_id IS NULL
+         AND p.created_by = u.id
+         AND u.role = 'superadmin';
+
+      DO $$
+      DECLARE constraint_name text;
+      BEGIN
+        FOR constraint_name IN
+          SELECT conname
+          FROM pg_constraint
+          WHERE conrelid = 'white_label_plan_configs'::regclass
+            AND contype = 'u'
+            AND pg_get_constraintdef(oid) LIKE '%plan_key%'
+        LOOP
+          EXECUTE format('ALTER TABLE white_label_plan_configs DROP CONSTRAINT IF EXISTS %I', constraint_name);
+        END LOOP;
+      END $$;
+
+      DROP INDEX IF EXISTS white_label_plan_configs_plan_key_unique;
+      DROP INDEX IF EXISTS white_label_plan_configs_plan_key_idx;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS white_label_plan_configs_owner_key_unique
+        ON white_label_plan_configs (COALESCE(owner_superadmin_id, 'platform'), plan_key);
+      CREATE INDEX IF NOT EXISTS white_label_plan_configs_owner_idx
+        ON white_label_plan_configs(owner_superadmin_id);
     `,
   },
 
@@ -811,19 +858,19 @@ const steps: MigrationStep[] = [
     sql: `
       INSERT INTO white_label_plan_configs (plan_key, plan_name, status, display_price, cost_price, billing_cycle, badge, enabled_features, disabled_features)
       VALUES
-        ('waba_demo', 'WABA DEMO', 'active', 0, 0, 'monthly', 'Demo',
+        ('waba_demo', 'WABA DEMO', 'active', 0, 0, 'half_yearly', 'Demo',
           '["whatsapp_cloud","live_chat","contacts","templates","campaigns","analytics","api_keys"]'::jsonb,
           '["automations","chatbot_flow","ai_assistant","ai_calling","team_inbox","groups","webhooks","google_sheets","email_marketing","multi_workspace","team_members","broadcast_scheduling","template_sync","conversation_assignment","labels_tags"]'::jsonb),
-        ('activated', 'Activated', 'active', 8500, 10, 'monthly', 'Active',
+        ('activated', 'Activated', 'active', 8500, 10, 'half_yearly', 'Active',
           '["whatsapp_cloud","live_chat","contacts","templates","campaigns","analytics","automations","team_inbox","groups","api_keys","webhooks"]'::jsonb,
           '["chatbot_flow","ai_assistant","ai_calling","google_sheets","email_marketing","multi_workspace","team_members","broadcast_scheduling","template_sync","conversation_assignment","labels_tags"]'::jsonb),
-        ('waba_business', 'WABA Business Plan', 'active', 15000, 25, 'monthly', 'Business',
+        ('waba_business', 'WABA Business Plan', 'active', 15000, 25, 'half_yearly', 'Business',
           '["whatsapp_cloud","live_chat","contacts","templates","campaigns","analytics","automations","chatbot_flow","ai_assistant","team_inbox","groups","api_keys","webhooks","google_sheets","multi_workspace","team_members","broadcast_scheduling","template_sync","conversation_assignment","labels_tags"]'::jsonb,
           '["ai_calling","email_marketing"]'::jsonb),
-        ('waba_individual', 'WABA Individual Plan', 'active', 3500, 5, 'monthly', 'Individual',
+        ('waba_individual', 'WABA Individual Plan', 'active', 3500, 5, 'half_yearly', 'Individual',
           '["whatsapp_cloud","live_chat","contacts","templates","campaigns","analytics"]'::jsonb,
           '["automations","chatbot_flow","ai_assistant","ai_calling","team_inbox","groups","api_keys","webhooks","google_sheets","email_marketing","multi_workspace","team_members","broadcast_scheduling","template_sync","conversation_assignment","labels_tags"]'::jsonb)
-      ON CONFLICT (plan_key) DO NOTHING;
+      ON CONFLICT DO NOTHING;
     `,
   },
 
